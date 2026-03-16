@@ -414,6 +414,286 @@ def wait_element(
 
 
 # ---------------------------------------------------------------------------
+# Scroll & fling tools
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def scroll_to_element(
+    text: str | None = None,
+    resource_id: str | None = None,
+    class_name: str | None = None,
+    description: str | None = None,
+    direction: str = "vertical",
+    max_swipes: int = 50,
+    reset_first: bool = True,
+) -> str:
+    """Scroll a scrollable container until a target element is found.
+
+    Uses Android's native UiScrollable scrollTo, which is the most reliable
+    way to find elements in long lists. Optionally resets scroll position
+    to the beginning first for maximum reliability.
+
+    Args:
+        text: Exact text of the target element.
+        resource_id: Resource ID of the target element.
+        class_name: Class name of the target element.
+        description: Content description of the target element.
+        direction: Scroll direction — "vertical" (default) or "horizontal".
+        max_swipes: Maximum number of swipes when resetting to beginning (default 50).
+        reset_first: If True (default), scroll to beginning before searching.
+                     Set to False if you know the element is ahead of current position.
+    """
+    try:
+        selector = _build_selector(text, resource_id, class_name, description)
+        if not selector:
+            return "Error: provide at least one selector (text, resource_id, class_name, description)."
+        d = device_manager.get_device()
+        scrollable = d(scrollable=True)
+        if not scrollable.exists:
+            return "Error: no scrollable container found on screen."
+        is_vertical = direction.lower() != "horizontal"
+        scroll_obj = scrollable.scroll.vert if is_vertical else scrollable.scroll.horiz
+        if reset_first:
+            scroll_obj.toBeginning(max_swipes=max_swipes)
+        scroll_obj.to(**selector)
+        target = d(**selector)
+        if target.exists:
+            return f"Found element after scrolling: {_format_element_info(target.info)}"
+        return f"Element not found after scrolling through the list: {selector}"
+    except Exception as e:
+        return f"Error: {e}"
+
+
+@mcp.tool()
+def scroll(
+    direction: str = "forward",
+    orientation: str = "vertical",
+    steps: int = 55,
+) -> str:
+    """Scroll the screen in a given direction.
+
+    Uses Android's native UiScrollable for reliable scrolling.
+
+    Args:
+        direction: "forward" (default) or "backward".
+        orientation: "vertical" (default) or "horizontal".
+        steps: Number of steps (higher = slower scroll). Default 55.
+    """
+    try:
+        d = device_manager.get_device()
+        scrollable = d(scrollable=True)
+        if not scrollable.exists:
+            return "Error: no scrollable container found on screen."
+        scroll_obj = scrollable.scroll.vert if orientation.lower() != "horizontal" else scrollable.scroll.horiz
+        if direction.lower() == "backward":
+            reached_end = scroll_obj.backward(steps=steps)
+        else:
+            reached_end = scroll_obj.forward(steps=steps)
+        return f"Scrolled {direction}. Reached end: {reached_end}"
+    except Exception as e:
+        return f"Error: {e}"
+
+
+@mcp.tool()
+def fling(
+    direction: str = "forward",
+    orientation: str = "vertical",
+    max_swipes: int = 500,
+) -> str:
+    """Fling (fast scroll) the screen. Faster than scroll, but less precise.
+
+    Args:
+        direction: "forward", "backward", "toBeginning", or "toEnd". Default "forward".
+        orientation: "vertical" (default) or "horizontal".
+        max_swipes: Maximum swipes for toBeginning/toEnd (default 500).
+    """
+    try:
+        d = device_manager.get_device()
+        scrollable = d(scrollable=True)
+        if not scrollable.exists:
+            return "Error: no scrollable container found on screen."
+        fling_obj = scrollable.fling.vert if orientation.lower() != "horizontal" else scrollable.fling.horiz
+        dir_lower = direction.lower()
+        if dir_lower == "backward":
+            result = fling_obj.backward()
+        elif dir_lower == "tobeginning":
+            result = fling_obj.toBeginning(max_swipes=max_swipes)
+        elif dir_lower == "toend":
+            result = fling_obj.toEnd(max_swipes=max_swipes)
+        elif dir_lower == "forward":
+            result = fling_obj.forward()
+        else:
+            return f"Error: invalid direction '{direction}'. Use: forward, backward, toBeginning, toEnd."
+        return f"Flung {direction}. Reached end: {result}"
+    except Exception as e:
+        return f"Error: {e}"
+
+
+# ---------------------------------------------------------------------------
+# Wait tools
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def wait_element_gone(
+    text: str | None = None,
+    resource_id: str | None = None,
+    class_name: str | None = None,
+    description: str | None = None,
+    xpath: str | None = None,
+    timeout: float = 10.0,
+) -> str:
+    """Wait for a UI element to disappear from the screen.
+
+    Useful for waiting for loading indicators, dialogs, or splash screens to go away.
+
+    Args:
+        text: Exact text of the element.
+        resource_id: Resource ID.
+        class_name: Class name.
+        description: Content description.
+        xpath: XPath expression.
+        timeout: Maximum wait time in seconds (default 10).
+    """
+    try:
+        d = device_manager.get_device()
+        if xpath:
+            gone = d.xpath(xpath).wait_gone(timeout=timeout)
+            if gone:
+                return f"Element gone (xpath: {xpath})."
+            return f"Timeout ({timeout}s): element still present (xpath: {xpath})."
+        selector = _build_selector(text, resource_id, class_name, description)
+        if not selector:
+            return "Error: provide at least one selector."
+        gone = d(**selector).wait_gone(timeout=timeout)
+        if gone:
+            return f"Element gone: {selector}"
+        return f"Timeout ({timeout}s): element still present: {selector}"
+    except Exception as e:
+        return f"Error: {e}"
+
+
+# ---------------------------------------------------------------------------
+# Toast tools
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def get_toast(
+    wait_timeout: float = 10.0,
+    reset_first: bool = True,
+) -> str:
+    """Wait for and capture a toast message on screen.
+
+    Call this BEFORE triggering the action that shows the toast, or immediately after.
+    Toasts are ephemeral — they disappear quickly.
+
+    Args:
+        wait_timeout: Maximum seconds to wait for a toast (default 10).
+        reset_first: If True (default), clear any previously cached toast first.
+    """
+    try:
+        d = device_manager.get_device()
+        if reset_first:
+            d.toast.reset()
+        message = d.toast.get_message(wait_timeout=wait_timeout, default=None)
+        if message is None:
+            return f"No toast detected within {wait_timeout}s."
+        return json.dumps({"toast_message": message})
+    except Exception as e:
+        return f"Error: {e}"
+
+
+# ---------------------------------------------------------------------------
+# Watcher tools
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def watcher_add(
+    name: str,
+    xpath_conditions: list[str],
+    action: str = "click",
+    press_key: str | None = None,
+) -> str:
+    """Register a watcher that auto-handles UI elements when they appear.
+
+    Watchers run in the background and automatically respond to system dialogs,
+    permission prompts, popups, etc. Call watcher_start() after adding watchers.
+
+    Args:
+        name: Unique name for this watcher (used to remove it later).
+        xpath_conditions: List of XPath expressions that must ALL match to trigger.
+                          For simple text matching, use "//*[@text='Allow']".
+                          The action is performed on the LAST element in the list.
+        action: What to do when triggered — "click" (default) or "press".
+        press_key: Key to press if action is "press" (e.g. "back", "home").
+    """
+    try:
+        d = device_manager.get_device()
+        w = d.watcher(name)
+        for xpath in xpath_conditions:
+            w = w.when(xpath)
+        if action.lower() == "press":
+            if not press_key:
+                return "Error: press_key is required when action is 'press'."
+            w.press(press_key)
+        else:
+            w.click()
+        return f"Watcher '{name}' added: conditions={xpath_conditions}, action={action}"
+    except Exception as e:
+        return f"Error: {e}"
+
+
+@mcp.tool()
+def watcher_start(interval: float = 2.0) -> str:
+    """Start the background watcher that polls for registered conditions.
+
+    Must be called after adding watchers with watcher_add.
+
+    Args:
+        interval: Polling interval in seconds (default 2.0). Lower = more responsive but more CPU.
+    """
+    try:
+        d = device_manager.get_device()
+        if d.watcher.running():
+            return "Watcher is already running."
+        d.watcher.start(interval=interval)
+        return f"Watcher started (polling every {interval}s)."
+    except Exception as e:
+        return f"Error: {e}"
+
+
+@mcp.tool()
+def watcher_stop() -> str:
+    """Stop the background watcher."""
+    try:
+        d = device_manager.get_device()
+        if not d.watcher.running():
+            return "Watcher is not running."
+        d.watcher.stop()
+        return "Watcher stopped."
+    except Exception as e:
+        return f"Error: {e}"
+
+
+@mcp.tool()
+def watcher_remove(name: str | None = None) -> str:
+    """Remove registered watchers.
+
+    Args:
+        name: Name of a specific watcher to remove. If not provided, removes ALL watchers.
+    """
+    try:
+        d = device_manager.get_device()
+        if name:
+            d.watcher.remove(name)
+            return f"Watcher '{name}' removed."
+        else:
+            d.watcher.remove()
+            return "All watchers removed."
+    except Exception as e:
+        return f"Error: {e}"
+
+
+# ---------------------------------------------------------------------------
 # Screenshot & hierarchy
 # ---------------------------------------------------------------------------
 
