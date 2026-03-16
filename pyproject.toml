@@ -1,0 +1,22 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "uiautomator2-mcp"
+version = "0.1.0"
+description = "MCP server for Android device automation via uiautomator2"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+dependencies = [
+    "mcp>=1.0.0",
+    "uiautomator2>=3.0.0",
+    "Pillow>=9.0.0",
+]
+
+[project.scripts]
+uiautomator2-mcp = "uiautomator2_mcp.server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/uiautomator2_mcp"]
