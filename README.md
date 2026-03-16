@@ -7,61 +7,70 @@ Enables AI agents (Claude, etc.) to control Android devices — tap, swipe, type
 ## Prerequisites
 
 - Python 3.10+
+- [uv](https://docs.astral.sh/uv/getting-started/installation/) (recommended) or pip
 - Android device with USB debugging enabled (or an emulator)
 - ADB installed and device visible via `adb devices`
 
-## Installation
+## Quick Start
+
+### Claude Code — one command to add & auto-run:
 
 ```bash
+claude mcp add uiautomator2 -- uvx uiautomator2-mcp
+```
+
+That's it. Claude will auto-launch the server when needed.
+
+### Claude Desktop
+
+Add to `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "uiautomator2": {
+      "command": "uvx",
+      "args": ["uiautomator2-mcp"]
+    }
+  }
+}
+```
+
+### Before PyPI publish — install from git
+
+```bash
+# Claude Code
+claude mcp add uiautomator2 -- uvx --from "git+https://github.com/stayer147/uiautomator2mcp" uiautomator2-mcp
+
+# Claude Desktop — use in config:
+{
+  "command": "uvx",
+  "args": ["--from", "git+https://github.com/stayer147/uiautomator2mcp", "uiautomator2-mcp"]
+}
+```
+
+### Alternative methods
+
+```bash
+# Using pipx
+pipx run uiautomator2-mcp
+
+# Using pip (global install)
+pip install uiautomator2-mcp
+uiautomator2-mcp
+
+# Using python -m
+pip install uiautomator2-mcp
+python -m uiautomator2_mcp
+
+# From source
+git clone https://github.com/stayer147/uiautomator2mcp.git
+cd uiautomator2mcp
 pip install -e .
-```
-
-Or directly from the repository:
-
-```bash
-pip install git+https://github.com/stayer147/uiautomator2.git@claude/mcp-uiautomator2-server-Y1BUH
-```
-
-## Usage
-
-### Running the server
-
-```bash
 uiautomator2-mcp
 ```
 
-The server communicates over stdio (standard MCP transport).
-
-### Claude Desktop configuration
-
-Add to your Claude Desktop config (`claude_desktop_config.json`):
-
-```json
-{
-  "mcpServers": {
-    "uiautomator2": {
-      "command": "uiautomator2-mcp"
-    }
-  }
-}
-```
-
-### Claude Code configuration
-
-Add to your `.mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "uiautomator2": {
-      "command": "uiautomator2-mcp",
-      "type": "stdio"
-    }
-  }
-}
-```
-
-## Available Tools
+## Available Tools (35)
 
 ### Connection
 | Tool | Description |
@@ -134,6 +143,15 @@ Add to your `.mcp.json`:
 4. **Tap elements** by text or resource ID
 5. **Type text** into input fields
 6. **Take another screenshot** to verify results
+
+## Publishing to PyPI
+
+```bash
+uv build
+uv publish
+```
+
+After publishing, `uvx uiautomator2-mcp` will work out of the box.
 
 ## License
 
