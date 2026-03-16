@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import io
 import json
+import os
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -417,35 +418,95 @@ def wait_element(
 # ---------------------------------------------------------------------------
 
 @mcp.tool()
-def screenshot() -> str:
-    """Take a screenshot and return it as a base64-encoded PNG image.
+def screenshot(save_path: str = "/tmp/screenshot.png") -> str:
+    """Take a screenshot and save it to a file.
 
-    The result is a base64 string that can be decoded into a PNG file.
+    Returns the file path. The agent can then open the file to view it.
+    Format is determined by file extension (.png or .jpg/.jpeg).
+
+    Args:
+        save_path: Path to save the screenshot (default "/tmp/screenshot.png").
+                   Use .jpg extension for smaller file size.
     """
     try:
         d = device_manager.get_device()
         img = d.screenshot()
-        buf = io.BytesIO()
-        img.save(buf, format="PNG")
-        b64 = base64.b64encode(buf.getvalue()).decode("ascii")
-        return f"data:image/png;base64,{b64}"
+        img.save(save_path)
+        width, height = img.size
+        file_size = os.path.getsize(save_path)
+        return (
+            f"Screenshot saved to {save_path} "
+            f"({width}x{height}, {file_size // 1024}KB)"
+        )
     except Exception as e:
         return f"Error: {e}"
 
 
 @mcp.tool()
-def dump_hierarchy() -> str:
-    """Dump the current UI hierarchy as XML.
+def dump_hierarchy(compact: bool = True) -> str:
+    """Dump the current UI hierarchy.
 
-    Returns the full XML representation of all visible UI elements.
-    Useful for understanding screen layout and finding element selectors.
+    Args:
+        compact: If True (default), return a concise one-line-per-element format.
+                 If False, return the full XML. Compact mode is 10-50x smaller.
     """
     try:
         d = device_manager.get_device()
-        xml = d.dump_hierarchy()
-        return xml
+        xml_str = d.dump_hierarchy()
+        if not compact:
+            return xml_str
+        return _parse_hierarchy_compact(xml_str)
     except Exception as e:
         return f"Error: {e}"
+
+
+def _parse_hierarchy_compact(xml_str: str) -> str:
+    """Parse UI hierarchy XML into a compact text format."""
+    from lxml import etree
+
+    root = etree.fromstring(xml_str.encode("utf-8"))
+    lines: list[str] = []
+    idx = 0
+    for node in root.iter("node"):
+        text = node.get("text", "")
+        resource_id = node.get("resource-id", "")
+        class_name = node.get("class", "")
+        description = node.get("content-desc", "")
+        bounds = node.get("bounds", "")
+        clickable = node.get("clickable", "false")
+
+        # Skip empty containers that add noise
+        if not text and not resource_id and not description:
+            if class_name in (
+                "android.view.View",
+                "android.widget.FrameLayout",
+                "android.widget.LinearLayout",
+                "android.widget.RelativeLayout",
+            ):
+                continue
+
+        parts = [f"[{idx}]"]
+        # Short class name (strip android.widget. prefix)
+        short_class = class_name.replace("android.widget.", "").replace(
+            "android.view.", ""
+        )
+        parts.append(short_class)
+        if text:
+            parts.append(f'"{text}"')
+        if description:
+            parts.append(f'desc="{description}"')
+        if resource_id:
+            # Shorten com.package.name:id/foo → id/foo
+            short_id = resource_id.split(":id/")[-1] if ":id/" in resource_id else resource_id
+            parts.append(f"#{short_id}")
+        if clickable == "true":
+            parts.append("[clickable]")
+        parts.append(bounds)
+
+        lines.append(" ".join(parts))
+        idx += 1
+
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
