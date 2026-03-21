@@ -78,6 +78,24 @@ def _xpath_text_is_empty(elem: Any) -> bool:
     return isinstance(text_value, str) and text_value == ""
 
 
+def _center_from_bounds(info: dict[str, Any]) -> tuple[int, int] | None:
+    """Calculate the element center from uiautomator bounds info."""
+    bounds = info.get("bounds")
+    if not isinstance(bounds, dict):
+        return None
+
+    left = bounds.get("left")
+    right = bounds.get("right")
+    top = bounds.get("top")
+    bottom = bounds.get("bottom")
+    if not all(isinstance(value, int) for value in (left, right, top, bottom)):
+        return None
+
+    center_x = (left + right) // 2
+    center_y = (top + bottom) // 2
+    return center_x, center_y
+
+
 # ---------------------------------------------------------------------------
 # Connection tools
 # ---------------------------------------------------------------------------
@@ -334,6 +352,56 @@ def tap_element(
             elem.click()
             return f"Tapped element: {selector}"
         return f"Element not found with selector: {selector}"
+    except Exception as e:
+        return f"Error: {e}"
+
+
+@mcp.tool()
+def double_tap_element(
+    text: str | None = None,
+    resource_id: str | None = None,
+    class_name: str | None = None,
+    description: str | None = None,
+    xpath: str | None = None,
+) -> str:
+    """Find a UI element and double-tap its center point.
+
+    Provide at least one selector. If xpath is given, it takes precedence.
+
+    Args:
+        text: Exact text of the element.
+        resource_id: Resource ID (e.g. "com.example:id/button").
+        class_name: Class name (e.g. "android.widget.Button").
+        description: Content description.
+        xpath: XPath expression.
+    """
+    try:
+        d = device_manager.get_device()
+        if xpath:
+            elem = d.xpath(xpath)
+            if not elem.exists:
+                return f"Element not found with xpath: {xpath}"
+
+            node = elem.get()
+            info = node.info if node is not None and hasattr(node, "info") else {}
+            center = _center_from_bounds(info)
+            if center is None:
+                return f"Error: Unable to determine element bounds for xpath: {xpath}"
+            d.double_click(center[0], center[1])
+            return f"Double-tapped element (xpath: {xpath})."
+
+        selector = _build_selector(text, resource_id, class_name, description)
+        if not selector:
+            return "Error: provide at least one selector."
+        elem = d(**selector)
+        if not elem.exists:
+            return f"Element not found with selector: {selector}"
+
+        center = _center_from_bounds(elem.info)
+        if center is None:
+            return f"Error: Unable to determine element bounds for selector: {selector}"
+        d.double_click(center[0], center[1])
+        return f"Double-tapped element: {selector}"
     except Exception as e:
         return f"Error: {e}"
 
