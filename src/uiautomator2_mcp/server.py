@@ -83,31 +83,38 @@ def _center_from_info(info: dict[str, Any], *, action: str = "element action") -
     """Extract element center coordinates from uiautomator2 info bounds.
 
     Supports common uiautomator2 formats:
-    - bounds as dict: {"left": 0, "top": 100, "right": 1080, "bottom": 240}
-    - bounds as string: "[0,100][1080,240]"
+    - visibleBounds or bounds as dict: {"left": 0, "top": 100, "right": 1080, "bottom": 240}
+    - visibleBounds or bounds as string: "[0,100][1080,240]"
+
+    Prefers visibleBounds when available, then falls back to bounds.
     """
     error_message = f"Cannot resolve element bounds for {action}"
-    bounds = info.get("bounds")
-    if bounds is None:
+
+    def _parse_bounds(raw_bounds: Any) -> tuple[int, int, int, int]:
+        if isinstance(raw_bounds, dict):
+            keys = ("left", "top", "right", "bottom")
+            if all(isinstance(raw_bounds.get(key), int) for key in keys):
+                return (
+                    raw_bounds["left"],
+                    raw_bounds["top"],
+                    raw_bounds["right"],
+                    raw_bounds["bottom"],
+                )
+            raise ValueError(error_message)
+        if isinstance(raw_bounds, str):
+            match = re.fullmatch(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", raw_bounds.strip())
+            if not match:
+                raise ValueError(error_message)
+            return tuple(int(part) for part in match.groups())
         raise ValueError(error_message)
 
-    if isinstance(bounds, dict):
-        keys = ("left", "top", "right", "bottom")
-        if all(isinstance(bounds.get(key), int) for key in keys):
-            left = bounds["left"]
-            top = bounds["top"]
-            right = bounds["right"]
-            bottom = bounds["bottom"]
-        else:
-            raise ValueError(error_message)
-    elif isinstance(bounds, str):
-        match = re.fullmatch(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", bounds.strip())
-        if not match:
-            raise ValueError(error_message)
-        left, top, right, bottom = (int(part) for part in match.groups())
-    else:
+    raw_bounds = info.get("visibleBounds")
+    if raw_bounds is None:
+        raw_bounds = info.get("bounds")
+    if raw_bounds is None:
         raise ValueError(error_message)
 
+    left, top, right, bottom = _parse_bounds(raw_bounds)
     if right < left or bottom < top:
         raise ValueError(error_message)
 
