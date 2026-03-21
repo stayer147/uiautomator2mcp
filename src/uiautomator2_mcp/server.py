@@ -80,7 +80,7 @@ def _xpath_text_is_empty(elem: Any) -> bool:
 
 
 def _xpath_selector_from_info(elem: Any) -> dict[str, str]:
-    """Build the most stable selector available from XPath element info."""
+    """Build a best-effort selector from XPath element info."""
     info = _xpath_element_info(elem)
     selector: dict[str, str] = {}
 
@@ -101,6 +101,19 @@ def _xpath_selector_from_info(elem: Any) -> dict[str, str]:
         selector["text"] = text_value
 
     return selector
+
+
+def _selector_match_count(d: Any, selector: dict[str, str]) -> int | None:
+    """Best-effort count of matches for a selector.
+
+    Returns:
+        Number of matches if available, otherwise None when the backend cannot
+        provide a reliable count.
+    """
+    try:
+        return int(d(**selector).count)
+    except Exception:
+        return None
 
 
 def _center_from_info(info: dict[str, Any], *, action: str = "element action") -> tuple[int, int]:
@@ -481,18 +494,30 @@ def set_element_text(
 
                     fallback_selector = _xpath_selector_from_info(elem)
                     if fallback_selector:
+                        selector_count = _selector_match_count(d, fallback_selector)
+                        if selector_count is None:
+                            return (
+                                "Error: XPath clear-text path failed and selector fallback could not "
+                                "verify selector uniqueness."
+                            )
+                        if selector_count != 1:
+                            return (
+                                "Error: XPath clear-text path failed and selector fallback matched "
+                                f"{selector_count} elements, so writing was skipped to avoid editing "
+                                "the wrong field."
+                            )
+
                         try:
-                            selector_elem = d(**fallback_selector)
-                            if selector_elem.exists:
-                                selector_elem.set_text(value)
-                                return (
-                                    f"Set text to {value!r} (xpath: {xpath}). "
-                                    "Used selector fallback derived from XPath node info."
-                                )
+                            d(**fallback_selector).set_text(value)
+                            return (
+                                f"Set text to {value!r} (xpath: {xpath}). "
+                                "Used selector fallback derived from XPath node info after "
+                                "uniqueness check."
+                            )
                         except Exception as selector_error:
                             return (
-                                "Error: XPath clear-text path failed and selector fallback derived from "
-                                f"XPath node info also failed: {selector_error}"
+                                "Error: XPath clear-text path failed and unique selector fallback "
+                                f"derived from XPath node info also failed: {selector_error}"
                             )
 
                     fallback_resource_id = _xpath_resource_id(elem)
