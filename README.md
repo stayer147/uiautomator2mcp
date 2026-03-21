@@ -70,7 +70,7 @@ pip install -e .
 uiautomator2-mcp
 ```
 
-## Available Tools (35)
+## Available Tools (36)
 
 ### Connection
 | Tool | Description |
@@ -95,6 +95,7 @@ uiautomator2-mcp
 |------|-------------|
 | `find_element` | Find element by text, resource ID, class, description, or XPath |
 | `tap_element` | Find and tap an element |
+| `double_tap_element` | Find and double-tap an element by selector or XPath |
 | `set_element_text` | Set text in an input field |
 | `element_exists` | Check if an element exists |
 | `wait_element` | Wait for an element to appear |
@@ -141,8 +142,9 @@ uiautomator2-mcp
 2. **Take a screenshot** to see the current screen
 3. **Dump hierarchy** to understand the UI structure
 4. **Tap elements** by text or resource ID
-5. **Type text** into input fields
-6. **Take another screenshot** to verify results
+5. **Double-tap directly via XPath** when needed, e.g. `double_tap_element(xpath="//android.widget.TextView[@text='Gallery']")`
+6. **Type text** into input fields
+7. **Take another screenshot** to verify results
 
 ## Publishing to PyPI
 
