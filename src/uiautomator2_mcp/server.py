@@ -83,15 +83,21 @@ def _selector_count(elem: Any) -> int | None:
 
     Returns None when the backend does not expose a reliable count API.
     """
-    count_attr = getattr(elem, "count", None)
+    try:
+        count_attr = getattr(elem, "count", None)
+    except Exception:
+        return None
+
     if isinstance(count_attr, int):
         return count_attr
+
     if callable(count_attr):
         try:
             count_value = count_attr()
             return count_value if isinstance(count_value, int) else None
         except Exception:
             return None
+
     return None
 
 
