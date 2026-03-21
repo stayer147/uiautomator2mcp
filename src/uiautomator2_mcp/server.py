@@ -78,6 +78,23 @@ def _xpath_text_is_empty(elem: Any) -> bool:
     return isinstance(text_value, str) and text_value == ""
 
 
+def _selector_count(elem: Any) -> int | None:
+    """Best-effort count of selector matches.
+
+    Returns None when the backend does not expose a reliable count API.
+    """
+    count_attr = getattr(elem, "count", None)
+    if isinstance(count_attr, int):
+        return count_attr
+    if callable(count_attr):
+        try:
+            count_value = count_attr()
+            return count_value if isinstance(count_value, int) else None
+        except Exception:
+            return None
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Connection tools
 # ---------------------------------------------------------------------------
@@ -378,6 +395,14 @@ def set_element_text(
                                     "Error: XPath clear-text path failed and selector fallback could not find "
                                     f"resource-id {fallback_resource_id!r}."
                                 )
+
+                            selector_count = _selector_count(selector_elem)
+                            if selector_count is not None and selector_count != 1:
+                                return (
+                                    "Error: XPath clear-text path failed and selector/resource-id fallback is "
+                                    f"ambiguous for {fallback_resource_id!r} ({selector_count} matches)."
+                                )
+
                             selector_elem.set_text(value)
                             return (
                                 f"Set text to {value!r} (xpath: {xpath}). "
