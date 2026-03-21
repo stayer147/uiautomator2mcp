@@ -108,17 +108,18 @@ def _center_from_info(info: dict[str, Any], *, action: str = "element action") -
             return tuple(int(part) for part in match.groups())
         raise ValueError(error_message)
 
-    raw_bounds = info.get("visibleBounds")
-    if raw_bounds is None:
-        raw_bounds = info.get("bounds")
-    if raw_bounds is None:
-        raise ValueError(error_message)
+    for raw_bounds in (info.get("visibleBounds"), info.get("bounds")):
+        if raw_bounds is None:
+            continue
+        try:
+            left, top, right, bottom = _parse_bounds(raw_bounds)
+        except ValueError:
+            continue
+        if right < left or bottom < top:
+            continue
+        return (left + right) // 2, (top + bottom) // 2
 
-    left, top, right, bottom = _parse_bounds(raw_bounds)
-    if right < left or bottom < top:
-        raise ValueError(error_message)
-
-    return (left + right) // 2, (top + bottom) // 2
+    raise ValueError(error_message)
 
 
 # ---------------------------------------------------------------------------
