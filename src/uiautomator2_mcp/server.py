@@ -6,6 +6,7 @@ import base64
 import io
 import json
 import os
+import re
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -78,22 +79,47 @@ def _xpath_text_is_empty(elem: Any) -> bool:
     return isinstance(text_value, str) and text_value == ""
 
 
-def _center_from_bounds(info: dict[str, Any]) -> tuple[int, int] | None:
-    """Calculate the element center from uiautomator bounds info."""
-    bounds = info.get("bounds")
-    if not isinstance(bounds, dict):
-        return None
+def _center_from_info(info: dict[str, Any], *, action: str = "element action") -> tuple[int, int]:
+    """Extract element center coordinates from uiautomator2 info bounds.
 
-    left = bounds.get("left")
-    right = bounds.get("right")
-    top = bounds.get("top")
-    bottom = bounds.get("bottom")
-    if not all(isinstance(value, int) for value in (left, right, top, bottom)):
-        return None
+    Supports common uiautomator2 formats:
+    - visibleBounds or bounds as dict: {"left": 0, "top": 100, "right": 1080, "bottom": 240}
+    - visibleBounds or bounds as string: "[0,100][1080,240]"
 
-    center_x = (left + right) // 2
-    center_y = (top + bottom) // 2
-    return center_x, center_y
+    Prefers visibleBounds when available, then falls back to bounds.
+    """
+    error_message = f"Cannot resolve element bounds for {action}"
+
+    def _parse_bounds(raw_bounds: Any) -> tuple[int, int, int, int]:
+        if isinstance(raw_bounds, dict):
+            keys = ("left", "top", "right", "bottom")
+            if all(isinstance(raw_bounds.get(key), int) for key in keys):
+                return (
+                    raw_bounds["left"],
+                    raw_bounds["top"],
+                    raw_bounds["right"],
+                    raw_bounds["bottom"],
+                )
+            raise ValueError(error_message)
+        if isinstance(raw_bounds, str):
+            match = re.fullmatch(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", raw_bounds.strip())
+            if not match:
+                raise ValueError(error_message)
+            return tuple(int(part) for part in match.groups())
+        raise ValueError(error_message)
+
+    for raw_bounds in (info.get("visibleBounds"), info.get("bounds")):
+        if raw_bounds is None:
+            continue
+        try:
+            left, top, right, bottom = _parse_bounds(raw_bounds)
+        except ValueError:
+            continue
+        if right < left or bottom < top:
+            continue
+        return (left + right) // 2, (top + bottom) // 2
+
+    raise ValueError(error_message)
 
 
 # ---------------------------------------------------------------------------
@@ -341,7 +367,11 @@ def tap_element(
         if xpath:
             elem = d.xpath(xpath)
             if elem.exists:
-                elem.click()
+                node = elem.get()
+                if node is None or not hasattr(node, "info"):
+                    return "Error: Cannot resolve element bounds for tap"
+                x, y = _center_from_info(node.info, action="tap")
+                d.click(x, y)
                 return f"Tapped element (xpath: {xpath})."
             return f"Element not found with xpath: {xpath}"
         selector = _build_selector(text, resource_id, class_name, description)
@@ -349,7 +379,8 @@ def tap_element(
             return "Error: provide at least one selector."
         elem = d(**selector)
         if elem.exists:
-            elem.click()
+            x, y = _center_from_info(elem.info, action="tap")
+            d.click(x, y)
             return f"Tapped element: {selector}"
         return f"Element not found with selector: {selector}"
     except Exception as e:
@@ -364,44 +395,31 @@ def double_tap_element(
     description: str | None = None,
     xpath: str | None = None,
 ) -> str:
-    """Find a UI element and double-tap its center point.
+    """Find a UI element and double-tap its center.
 
     Provide at least one selector. If xpath is given, it takes precedence.
-
-    Args:
-        text: Exact text of the element.
-        resource_id: Resource ID (e.g. "com.example:id/button").
-        class_name: Class name (e.g. "android.widget.Button").
-        description: Content description.
-        xpath: XPath expression.
     """
     try:
         d = device_manager.get_device()
         if xpath:
             elem = d.xpath(xpath)
-            if not elem.exists:
-                return f"Element not found with xpath: {xpath}"
-
-            node = elem.get()
-            info = node.info if node is not None and hasattr(node, "info") else {}
-            center = _center_from_bounds(info)
-            if center is None:
-                return f"Error: Unable to determine element bounds for xpath: {xpath}"
-            d.double_click(center[0], center[1])
-            return f"Double-tapped element (xpath: {xpath})."
-
+            if elem.exists:
+                node = elem.get()
+                if node is None or not hasattr(node, "info"):
+                    return "Error: Cannot resolve element bounds for double tap"
+                x, y = _center_from_info(node.info, action="double tap")
+                d.double_click(x, y)
+                return f"Double-tapped element (xpath: {xpath})."
+            return f"Element not found with xpath: {xpath}"
         selector = _build_selector(text, resource_id, class_name, description)
         if not selector:
             return "Error: provide at least one selector."
         elem = d(**selector)
-        if not elem.exists:
-            return f"Element not found with selector: {selector}"
-
-        center = _center_from_bounds(elem.info)
-        if center is None:
-            return f"Error: Unable to determine element bounds for selector: {selector}"
-        d.double_click(center[0], center[1])
-        return f"Double-tapped element: {selector}"
+        if elem.exists:
+            x, y = _center_from_info(elem.info, action="double tap")
+            d.double_click(x, y)
+            return f"Double-tapped element: {selector}"
+        return f"Element not found with selector: {selector}"
     except Exception as e:
         return f"Error: {e}"
 
