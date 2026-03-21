@@ -46,6 +46,38 @@ def _format_element_info(info: dict[str, Any]) -> str:
     return json.dumps(info, indent=2, ensure_ascii=False)
 
 
+def _is_xpath_clear_failure(error: Exception) -> bool:
+    """Return True when XPath set_text failed in known ADB clear-text paths."""
+    message = str(error)
+    return any(
+        marker in message
+        for marker in ("ADB_KEYBOARD_CLEAR_TEXT", "ExtractedText", "AdbBroadcastError")
+    )
+
+
+def _xpath_element_info(elem: Any) -> dict[str, Any]:
+    """Best-effort fetch of XPath element info."""
+    node = elem.get()
+    return node.info if node is not None and hasattr(node, "info") else {}
+
+
+def _xpath_resource_id(elem: Any) -> str | None:
+    """Extract a usable resource-id from an XPath element, if present."""
+    info = _xpath_element_info(elem)
+    for key in ("resourceName", "resourceId", "resource-id"):
+        value = info.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _xpath_text_is_empty(elem: Any) -> bool:
+    """Check whether the XPath element has an empty text value."""
+    info = _xpath_element_info(elem)
+    text_value = info.get("text")
+    return isinstance(text_value, str) and text_value == ""
+
+
 # ---------------------------------------------------------------------------
 # Connection tools
 # ---------------------------------------------------------------------------
@@ -330,8 +362,45 @@ def set_element_text(
         if xpath:
             elem = d.xpath(xpath)
             if elem.exists:
-                elem.set_text(value)
-                return f"Set text to {value!r} (xpath: {xpath})."
+                try:
+                    elem.set_text(value)
+                    return f"Set text to {value!r} (xpath: {xpath})."
+                except Exception as xpath_error:
+                    if not _is_xpath_clear_failure(xpath_error):
+                        raise
+
+                    fallback_resource_id = _xpath_resource_id(elem)
+                    if fallback_resource_id:
+                        try:
+                            selector_elem = d(resourceId=fallback_resource_id)
+                            if not selector_elem.exists:
+                                return (
+                                    "Error: XPath clear-text path failed and selector fallback could not find "
+                                    f"resource-id {fallback_resource_id!r}."
+                                )
+                            selector_elem.set_text(value)
+                            return (
+                                f"Set text to {value!r} (xpath: {xpath}). "
+                                f"Used selector fallback via resource-id {fallback_resource_id!r}."
+                            )
+                        except Exception as selector_error:
+                            return (
+                                "Error: XPath clear-text path failed and selector/resource-id fallback failed: "
+                                f"{selector_error}"
+                            )
+
+                    if _xpath_text_is_empty(elem):
+                        elem.click()
+                        d.send_keys(value)
+                        return (
+                            f"Set text to {value!r} (xpath: {xpath}). "
+                            "Used click+send_keys fallback for empty field."
+                        )
+
+                    return (
+                        "Error: XPath field text replacement requires ADB clear path, which failed; "
+                        "selector/resource-id or custom replace strategy needed."
+                    )
             return f"Element not found with xpath: {xpath}"
         selector = _build_selector(text, resource_id, class_name, description)
         if not selector:
