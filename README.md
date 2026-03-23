@@ -70,7 +70,7 @@ pip install -e .
 uiautomator2-mcp
 ```
 
-## Available Tools (41)
+## Available Tools (44)
 
 ### Connection
 | Tool | Description |
@@ -86,12 +86,19 @@ uiautomator2-mcp
 | Tool | Description |
 |------|-------------|
 | `tap` | Tap at screen coordinates |
+| `multi_tap` | Tap the same coordinates multiple times |
 | `double_tap` | Double-tap at coordinates |
 | `long_tap` | Long-press at coordinates |
 | `swipe` | Swipe between two points |
 | `drag` | Drag between two points |
 | `input_text` | Type text into the focused field |
 | `press_key` | Press a device key (home, back, enter, etc.) |
+
+### Compound Actions
+| Tool | Description |
+|------|-------------|
+| `tap_and_wait` | Tap an element, wait for the next UI state, and return a fresh hierarchy snapshot |
+| `tap_sequence` | Execute a validated sequence of taps, waits, typing, key presses, and swipes |
 
 ### Element Operations
 | Tool | Description |
@@ -167,6 +174,21 @@ When only one device is connected in the MCP session, tools can omit `device_id`
 3. **Capture error logs**: `get_logs(level="E", package="com.example.app")`
 4. **Take a screenshot** of the failing state
 5. **Dump hierarchy** if you need the exact UI structure
+
+## Example login in one tool call
+
+```python
+tap_sequence(
+  steps=[
+    {"action": "tap_element", "resource_id": "com.example:id/email"},
+    {"action": "input_text", "text": "user@example.com"},
+    {"action": "tap_element", "resource_id": "com.example:id/password"},
+    {"action": "input_text", "text": "correct horse battery staple"},
+    {"action": "tap_element", "resource_id": "com.example:id/sign_in"},
+    {"action": "wait", "resource_id": "com.example:id/home_feed", "timeout": 15}
+  ]
+)
+```
 
 ## Publishing to PyPI
 

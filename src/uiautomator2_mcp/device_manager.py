@@ -12,7 +12,6 @@ class DeviceManager:
 
     def __init__(self) -> None:
         self._devices: dict[str, u2.Device] = {}
-        self._default_serial: str | None = None
 
     @property
     def connected(self) -> bool:
@@ -35,12 +34,12 @@ class DeviceManager:
         resolved_serial = serial or self._resolve_default_serial()
         device = u2.connect(resolved_serial)
         resolved_serial = self._resolve_device_serial(device, fallback=resolved_serial)
+        info = device.info
         self._devices[resolved_serial] = device
-        self._default_serial = resolved_serial
-        return resolved_serial, device.info
+        return resolved_serial, info
 
     def get_device(self, device_id: str | None = None) -> u2.Device:
-        """Get a connected device, falling back to the current default when available."""
+        """Get a connected device, requiring explicit selection if ambiguous."""
         resolved_serial = self.get_serial(device_id)
         return self._devices[resolved_serial]
 
@@ -59,33 +58,25 @@ class DeviceManager:
         if not self._devices:
             raise RuntimeError("No device connected. Use the 'connect' tool first.")
 
-        if self._default_serial in self._devices:
-            return self._default_serial
+        if len(self._devices) > 1:
+            connected = ", ".join(sorted(self._devices))
+            raise RuntimeError(
+                "Multiple devices are connected in this MCP session. "
+                f"Pass device_id explicitly. Connected device_ids: {connected}"
+            )
 
-        if len(self._devices) == 1:
-            return next(iter(self._devices))
-
-        connected = ", ".join(sorted(self._devices))
-        raise RuntimeError(
-            "Multiple devices are connected in this MCP session, but no default device is set. "
-            f"Pass device_id explicitly. Connected device_ids: {connected}"
-        )
+        return next(iter(self._devices))
 
     def disconnect(self, device_id: str | None = None) -> str | None:
         """Disconnect one connected device and return its serial."""
         serial = self.get_serial(device_id)
         self._devices.pop(serial, None)
-        if not self._devices:
-            self._default_serial = None
-        elif self._default_serial == serial:
-            self._default_serial = next(reversed(self._devices))
         return serial
 
     def disconnect_all(self) -> list[str]:
         """Disconnect all tracked devices and return their serials."""
         serials = sorted(self._devices)
         self._devices.clear()
-        self._default_serial = None
         return serials
 
     def connected_device_ids(self) -> list[str]:
