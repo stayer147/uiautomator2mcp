@@ -70,7 +70,7 @@ pip install -e .
 uiautomator2-mcp
 ```
 
-## Available Tools (44)
+## Available Tools (45)
 
 ### Connection
 | Tool | Description |
@@ -113,8 +113,16 @@ uiautomator2-mcp
 ### Screenshots & UI Hierarchy
 | Tool | Description |
 |------|-------------|
-| `screenshot` | Take a screenshot and save it to a file |
-| `dump_hierarchy` | Get XML UI hierarchy |
+| `screenshot` | Take a screenshot as a saved file or inline JSON/base64 image payload |
+| `dump_hierarchy` | Get XML UI hierarchy or a compact text summary |
+| `get_ui_tree` | Get a richer JSON UI tree with element state for agent analysis |
+
+#### Agent-friendly analysis outputs
+
+- `screenshot(inline=True)` returns a JSON object with base64-encoded image data, MIME type, dimensions, and byte size so MCP clients can render the image without opening a filesystem path.
+- `screenshot(save_path="/tmp/screen.jpg", quality=70, max_width=1280)` keeps the original save-to-disk workflow while allowing resize/compression controls.
+- `get_ui_tree()` returns a structured JSON array of UI elements with `text`, `resource_id`, `class_name`, `content_desc`, `bounds`, `clickable`, `enabled`, `focused`, `selected`, `checked`, `scrollable`, and `index`.
+- `dump_hierarchy(compact=True)` remains available as the lightweight one-line-per-element snapshot, while `dump_hierarchy(compact=False)` still returns raw XML.
 
 ### App Management
 | Tool | Description |
@@ -160,20 +168,21 @@ When only one device is connected in the MCP session, tools can omit `device_id`
 2. **Connect** to one device: `connect("emulator-5554")`
 3. **Optionally connect a second device**: `connect("emulator-5556")`
 4. **Inspect a specific device**: `device_info(device_id="emulator-5554")`
-5. **Take a screenshot** to see the current screen: `screenshot(device_id="emulator-5554")`
-6. **Dump hierarchy** to understand the UI structure: `dump_hierarchy(device_id="emulator-5554")`
-7. **Tap elements** by text or resource ID
-8. **Double-tap directly via XPath** when needed, e.g. `double_tap_element(xpath="//android.widget.TextView[@text='Gallery']")`
-9. **Type text** into input fields
-10. **Take another screenshot** to verify results
+5. **Take a screenshot** to see the current screen: `screenshot(device_id="emulator-5554")` or request inline JSON/base64 output with `screenshot(inline=True, max_width=1080, device_id="emulator-5554")`
+6. **Dump hierarchy** to understand the lightweight UI structure: `dump_hierarchy(device_id="emulator-5554")`
+7. **Get a richer UI tree** when state matters: `get_ui_tree(device_id="emulator-5554")`
+8. **Tap elements** by text or resource ID
+9. **Double-tap directly via XPath** when needed, e.g. `double_tap_element(xpath="//android.widget.TextView[@text='Gallery']")`
+10. **Type text** into input fields
+11. **Take another screenshot** to verify results
 
 ## Example bug-report workflow
 
 1. **Clear old logs**: `clear_logs()`
 2. **Reproduce the bug** using the UI interaction tools
 3. **Capture error logs**: `get_logs(level="E", package="com.example.app")`
-4. **Take a screenshot** of the failing state
-5. **Dump hierarchy** if you need the exact UI structure
+4. **Take a screenshot** of the failing state, optionally inline for vision analysis
+5. **Dump hierarchy** for a lightweight snapshot or `get_ui_tree()` for richer element state
 
 ## Example login in one tool call
 
