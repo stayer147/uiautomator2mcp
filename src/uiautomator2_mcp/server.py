@@ -9,7 +9,9 @@ import os
 import re
 import time
 from typing import Any
+from xml.etree import ElementTree as ET
 
+from mcp import types
 from mcp.server.fastmcp import FastMCP
 
 from uiautomator2_mcp.adb_tools import (
@@ -138,6 +140,101 @@ def _sleep_seconds(seconds: float) -> None:
 def _format_element_info(info: dict[str, Any]) -> str:
     """Format element info as readable JSON."""
     return json.dumps(info, indent=2, ensure_ascii=False)
+
+def _normalize_image_format(image_format: str | None, *, save_path: str | None = None) -> str:
+    """Normalize requested image format to a Pillow-friendly value."""
+    format_hint = image_format
+    if format_hint is None and save_path:
+        suffix = os.path.splitext(save_path)[1].lower()
+        format_hint = {
+            ".png": "png",
+            ".jpg": "jpeg",
+            ".jpeg": "jpeg",
+        }.get(suffix)
+    normalized = (format_hint or "png").strip().lower()
+    if normalized == "jpg":
+        normalized = "jpeg"
+    if normalized not in {"png", "jpeg"}:
+        raise ValueError("image_format must be one of: png, jpeg, jpg")
+    return normalized
+
+
+def _resize_image(img: Any, *, max_width: int | None = None, max_height: int | None = None) -> Any:
+    """Resize an image to fit within the provided bounds while preserving aspect ratio."""
+    if max_width is not None and max_width <= 0:
+        raise ValueError("max_width must be positive")
+    if max_height is not None and max_height <= 0:
+        raise ValueError("max_height must be positive")
+    if max_width is None and max_height is None:
+        return img
+
+    width, height = img.size
+    scale_candidates = [1.0]
+    if max_width is not None:
+        scale_candidates.append(max_width / width)
+    if max_height is not None:
+        scale_candidates.append(max_height / height)
+    scale = min(scale_candidates)
+    if scale >= 1.0:
+        return img
+
+    new_size = (max(1, int(width * scale)), max(1, int(height * scale)))
+    resample = getattr(getattr(img, "Resampling", None), "LANCZOS", None)
+    if resample is None:
+        resample = getattr(img, "LANCZOS", 1)
+    return img.resize(new_size, resample)
+
+
+def _encode_image_bytes(img: Any, *, image_format: str, quality: int = 85) -> bytes:
+    """Encode a PIL image into PNG or JPEG bytes."""
+    if not 1 <= quality <= 100:
+        raise ValueError("quality must be between 1 and 100")
+
+    buffer = io.BytesIO()
+    save_kwargs: dict[str, Any] = {"format": image_format.upper()}
+    if image_format == "jpeg":
+        if img.mode not in ("RGB", "L"):
+            img = img.convert("RGB")
+        save_kwargs.update({"quality": quality, "optimize": True})
+    img.save(buffer, **save_kwargs)
+    return buffer.getvalue()
+
+
+def _mime_type_for_format(image_format: str) -> str:
+    """Map normalized image format to MIME type."""
+    return "image/jpeg" if image_format == "jpeg" else "image/png"
+
+
+def _parse_bounds(bounds: str) -> dict[str, int] | None:
+    """Parse Android bounds string like [0,0][100,200]."""
+    match = re.fullmatch(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", bounds.strip())
+    if not match:
+        return None
+    left, top, right, bottom = (int(value) for value in match.groups())
+    return {"left": left, "top": top, "right": right, "bottom": bottom}
+
+
+def _ui_tree_elements(xml_str: str) -> list[dict[str, Any]]:
+    """Parse UI hierarchy XML into a structured list of elements."""
+    root = ET.fromstring(xml_str)
+    elements: list[dict[str, Any]] = []
+    for order, node in enumerate(root.iter("node")):
+        raw_index = node.get("index")
+        elements.append({
+            "text": node.get("text", ""),
+            "resource_id": node.get("resource-id", ""),
+            "class_name": node.get("class", ""),
+            "content_desc": node.get("content-desc", ""),
+            "bounds": _parse_bounds(node.get("bounds", "")),
+            "clickable": node.get("clickable", "false") == "true",
+            "enabled": node.get("enabled", "false") == "true",
+            "focused": node.get("focused", "false") == "true",
+            "selected": node.get("selected", "false") == "true",
+            "checked": node.get("checked", "false") == "true",
+            "scrollable": node.get("scrollable", "false") == "true",
+            "index": int(raw_index) if raw_index and raw_index.isdigit() else order,
+        })
+    return elements
 
 
 def _is_xpath_clear_failure(error: Exception) -> bool:
@@ -1395,28 +1492,63 @@ def watcher_remove(name: str | None = None, device_id: str | None = None) -> str
 
 @mcp.tool()
 def screenshot(
-    save_path: str = "/tmp/screenshot.png",
+    save_path: str | None = None,
+    inline: bool = False,
+    image_format: str | None = None,
+    quality: int = 85,
+    max_width: int | None = None,
+    max_height: int | None = None,
     device_id: str | None = None,
-) -> str:
-    """Take a screenshot and save it to a file.
-
-    Returns the file path. The agent can then open the file to view it.
-    Format is determined by file extension (.png or .jpg/.jpeg).
+) -> Any:
+    """Take a screenshot either as a saved file or inline JSON image data.
 
     Args:
-        save_path: Path to save the screenshot (default "/tmp/screenshot.png").
-                   Use .jpg extension for smaller file size.
+        save_path: File path for saved screenshots. When inline is False, None defaults to
+            "/tmp/screenshot.png". When inline is True, None avoids writing a file.
+        inline: If True, return a JSON object with base64 image data for vision-ready clients.
+        image_format: Optional output format override: png (default) or jpeg/jpg. When omitted,
+            the save_path extension is used for saved files and png is used for inline mode.
+        quality: JPEG quality from 1-100. Ignored for PNG except for validation.
+        max_width: Optional maximum output width in pixels while preserving aspect ratio.
+        max_height: Optional maximum output height in pixels while preserving aspect ratio.
         device_id: Optional device serial/device ID. Required when multiple devices are connected.
     """
     try:
         d = _get_device(device_id)
-        img = d.screenshot()
-        img.save(save_path)
+        effective_save_path = save_path or (None if inline else "/tmp/screenshot.png")
+        img = _resize_image(
+            d.screenshot(),
+            max_width=max_width,
+            max_height=max_height,
+        )
+        normalized_format = _normalize_image_format(image_format, save_path=effective_save_path)
+        encoded = _encode_image_bytes(img, image_format=normalized_format, quality=quality)
         width, height = img.size
-        file_size = os.path.getsize(save_path)
+
+        if effective_save_path is not None:
+            with open(effective_save_path, "wb") as f:
+                f.write(encoded)
+
+        if inline:
+            payload: dict[str, Any] = {
+                "data": base64.b64encode(encoded).decode("ascii"),
+                "mime_type": _mime_type_for_format(normalized_format),
+                "width": width,
+                "height": height,
+                "byte_size": len(encoded),
+                "format": normalized_format,
+            }
+            if effective_save_path is not None:
+                payload["save_path"] = effective_save_path
+            return payload
+
+        if effective_save_path is None:
+            return "Error: save_path cannot be None when inline is False."
+
+        file_size = os.path.getsize(effective_save_path)
         return (
-            f"Screenshot saved to {save_path} "
-            f"({width}x{height}, {file_size // 1024}KB)"
+            f"Screenshot saved to {effective_save_path} "
+            f"({width}x{height}, {file_size // 1024}KB, format={normalized_format})"
         )
     except Exception as e:
         return f"Error: {e}"
@@ -1431,7 +1563,8 @@ def dump_hierarchy(
 
     Args:
         compact: If True (default), return a concise one-line-per-element format.
-                 If False, return the full XML. Compact mode is 10-50x smaller.
+                 If False, return the full XML. Compact mode is lightweight but omits
+                 stateful attributes that get_ui_tree() preserves.
         device_id: Optional device serial/device ID. Required when multiple devices are connected.
     """
     try:
@@ -1440,6 +1573,29 @@ def dump_hierarchy(
         if not compact:
             return xml_str
         return _parse_hierarchy_compact(xml_str)
+    except Exception as e:
+        return f"Error: {e}"
+
+
+@mcp.tool()
+def get_ui_tree(
+    structured: bool = True,
+    device_id: str | None = None,
+) -> Any:
+    """Return the current UI tree with richer per-element state for agent analysis.
+
+    Args:
+        structured: If True, return the JSON array as structured MCP output.
+            If False, return a JSON string containing the same array.
+        device_id: Optional device serial/device ID. Required when multiple devices are connected.
+    """
+    try:
+        d = _get_device(device_id)
+        elements = _ui_tree_elements(d.dump_hierarchy())
+        rendered = json.dumps(elements, ensure_ascii=False, indent=2)
+        if structured:
+            return ([types.TextContent(type="text", text=rendered)], elements)
+        return rendered
     except Exception as e:
         return f"Error: {e}"
 
