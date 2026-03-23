@@ -364,17 +364,11 @@ def device_info(device_id: str | None = None) -> str:
         device_id: Optional device serial/device ID. Required when multiple devices are connected.
     """
     try:
-        d = _get_device(device_id)
-        info = d.info
-        device = d.device_info
-        window = d.window_size()
-        result = {
-            "device_id": device_manager.get_serial(device_id),
-            "info": info,
-            "device_info": device,
-            "window_size": {"width": window[0], "height": window[1]},
-        }
-        return json.dumps(result, indent=2, ensure_ascii=False)
+        return json.dumps(
+            device_manager.get_device_details(device_id),
+            indent=2,
+            ensure_ascii=False,
+        )
     except Exception as e:
         return f"Error: {e}"
 
@@ -1810,14 +1804,17 @@ def shell(command: str, device_id: str | None = None) -> str:
         device_id: Optional device serial/device ID. Required when multiple devices are connected.
     """
     try:
-        d = _get_device(device_id)
-        result = d.shell(command)
-        if isinstance(result, tuple):
-            output, exit_code = result
-            if exit_code != 0:
-                return f"Exit code {exit_code}:\n{output}"
-            return output
-        return str(result)
+        result = device_manager.execute_shell(command, device_id)
+        details = result.output
+        if result.stderr:
+            details = (
+                f"{details}\n[stderr]\n{result.stderr}"
+                if details
+                else f"[stderr]\n{result.stderr}"
+            )
+        if result.exit_code != 0:
+            return f"Exit code {result.exit_code}:\n{details}" if details else f"Exit code {result.exit_code}."
+        return details
     except Exception as e:
         return f"Error: {e}"
 
