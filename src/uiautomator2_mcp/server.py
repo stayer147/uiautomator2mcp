@@ -11,11 +11,20 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
+from uiautomator2_mcp.adb_tools import (
+    list_avds as list_available_avds,
+    start_emulator as start_android_emulator,
+)
 from uiautomator2_mcp.device_manager import device_manager
+from uiautomator2_mcp.logcat import (
+    LogQuery,
+    clear_logs as clear_device_logs,
+    get_logs as get_device_logs,
+)
 
 mcp = FastMCP(
     "uiautomator2",
-    instructions="Android device automation via uiautomator2. Connect to a device first, then use tools to interact with it.",
+    instructions="Android device automation via uiautomator2. Use list_devices() to choose a target, connect() one or more devices, then pass device_id when multiple devices are connected.",
 )
 
 
@@ -159,6 +168,18 @@ def _center_from_info(info: dict[str, Any], *, action: str = "element action") -
     raise ValueError(error_message)
 
 
+def _get_device(device_id: str | None = None) -> Any:
+    """Resolve a connected device, requiring device_id when ambiguous."""
+    return device_manager.get_device(device_id)
+
+
+def _resolve_adb_serial(device_id: str | None = None) -> str:
+    """Resolve the target ADB serial for diagnostics tools."""
+    if device_id is not None and device_id.strip():
+        return device_id.strip()
+    return device_manager.get_serial(device_id)
+
+
 # ---------------------------------------------------------------------------
 # Connection tools
 # ---------------------------------------------------------------------------
@@ -169,32 +190,102 @@ def connect(serial: str | None = None) -> str:
 
     Args:
         serial: Device serial number or IP address (e.g. "emulator-5554" or "192.168.1.100").
-                If not provided, connects to the first available device.
+                If not provided, connects to the only available ready adb device.
     """
     try:
-        info = device_manager.connect(serial)
-        target = serial or "default device"
-        return f"Connected to {target}.\n\nDevice info:\n{_format_element_info(info)}"
+        resolved_serial, info = device_manager.connect(serial)
+        return (
+            f"Connected to {resolved_serial}.\n\n"
+            f"Connected devices in session: {device_manager.connected_device_ids()}\n\n"
+            f"Device info:\n{_format_element_info(info)}"
+        )
     except Exception as e:
         return f"Failed to connect: {e}"
 
 
 @mcp.tool()
-def disconnect() -> str:
-    """Disconnect from the current Android device."""
-    device_manager.disconnect()
-    return "Disconnected."
+def disconnect(device_id: str | None = None) -> str:
+    """Disconnect from one connected Android device.
+
+    Args:
+        device_id: Optional device serial/device ID. Required when multiple devices are connected.
+    """
+    try:
+        serial = device_manager.disconnect(device_id)
+        remaining = device_manager.connected_device_ids()
+        return (
+            f"Disconnected {serial}. Remaining connected devices: {remaining or '(none)'}"
+        )
+    except Exception as e:
+        return f"Error: {e}"
 
 
 @mcp.tool()
-def device_info() -> str:
-    """Get detailed information about the connected device (model, screen size, Android version, etc.)."""
+def list_devices() -> str:
+    """List devices currently visible to adb."""
     try:
-        d = device_manager.get_device()
+        devices = device_manager.list_devices()
+        session_devices = set(device_manager.connected_device_ids())
+        enriched = []
+        for device in devices:
+            enriched.append(
+                {
+                    **device,
+                    "connected_in_mcp_session": device.get("serial") in session_devices,
+                }
+            )
+        return json.dumps(enriched, indent=2, ensure_ascii=False)
+    except Exception as e:
+        return f"Error: {e}"
+
+
+@mcp.tool()
+def list_avds() -> str:
+    """List configured Android Virtual Devices available to the emulator."""
+    try:
+        return json.dumps(list_available_avds(), indent=2, ensure_ascii=False)
+    except Exception as e:
+        return f"Error: {e}"
+
+
+@mcp.tool()
+def start_emulator(
+    avd_name: str,
+    no_window: bool = False,
+    wipe_data: bool = False,
+) -> str:
+    """Start an Android emulator in the background.
+
+    Args:
+        avd_name: Name of the configured Android Virtual Device.
+        no_window: If True, starts the emulator without a visible window.
+        wipe_data: If True, starts the emulator with a wiped data partition.
+    """
+    try:
+        result = start_android_emulator(
+            avd_name,
+            no_window=no_window,
+            wipe_data=wipe_data,
+        )
+        return json.dumps(result, indent=2, ensure_ascii=False)
+    except Exception as e:
+        return f"Error: {e}"
+
+
+@mcp.tool()
+def device_info(device_id: str | None = None) -> str:
+    """Get detailed information about a connected device (model, screen size, Android version, etc.).
+
+    Args:
+        device_id: Optional device serial/device ID. Required when multiple devices are connected.
+    """
+    try:
+        d = _get_device(device_id)
         info = d.info
         device = d.device_info
         window = d.window_size()
         result = {
+            "device_id": device_manager.get_serial(device_id),
             "info": info,
             "device_info": device,
             "window_size": {"width": window[0], "height": window[1]},
@@ -209,15 +300,16 @@ def device_info() -> str:
 # ---------------------------------------------------------------------------
 
 @mcp.tool()
-def tap(x: int, y: int) -> str:
+def tap(x: int, y: int, device_id: str | None = None) -> str:
     """Tap at the given screen coordinates.
 
     Args:
         x: Horizontal coordinate (pixels from left).
         y: Vertical coordinate (pixels from top).
+        device_id: Optional device serial/device ID. Required when multiple devices are connected.
     """
     try:
-        d = device_manager.get_device()
+        d = _get_device(device_id)
         d.click(x, y)
         return f"Tapped at ({x}, {y})."
     except Exception as e:
@@ -264,6 +356,7 @@ def swipe(
     end_x: int,
     end_y: int,
     duration: float = 0.5,
+    device_id: str | None = None,
 ) -> str:
     """Swipe from one point to another.
 
@@ -273,9 +366,10 @@ def swipe(
         end_x: End horizontal coordinate.
         end_y: End vertical coordinate.
         duration: Swipe duration in seconds (default 0.5).
+        device_id: Optional device serial/device ID. Required when multiple devices are connected.
     """
     try:
-        d = device_manager.get_device()
+        d = _get_device(device_id)
         d.swipe(start_x, start_y, end_x, end_y, duration=duration)
         return f"Swiped from ({start_x}, {start_y}) to ({end_x}, {end_y})."
     except Exception as e:
@@ -323,15 +417,16 @@ def input_text(text: str) -> str:
 
 
 @mcp.tool()
-def press_key(key: str) -> str:
+def press_key(key: str, device_id: str | None = None) -> str:
     """Press a device key.
 
     Args:
         key: Key name — one of: home, back, enter, menu, recent,
              volume_up, volume_down, power, delete, tab, space.
+        device_id: Optional device serial/device ID. Required when multiple devices are connected.
     """
     try:
-        d = device_manager.get_device()
+        d = _get_device(device_id)
         d.press(key)
         return f"Pressed key: {key}"
     except Exception as e:
@@ -906,7 +1001,10 @@ def watcher_remove(name: str | None = None) -> str:
 # ---------------------------------------------------------------------------
 
 @mcp.tool()
-def screenshot(save_path: str = "/tmp/screenshot.png") -> str:
+def screenshot(
+    save_path: str = "/tmp/screenshot.png",
+    device_id: str | None = None,
+) -> str:
     """Take a screenshot and save it to a file.
 
     Returns the file path. The agent can then open the file to view it.
@@ -915,9 +1013,10 @@ def screenshot(save_path: str = "/tmp/screenshot.png") -> str:
     Args:
         save_path: Path to save the screenshot (default "/tmp/screenshot.png").
                    Use .jpg extension for smaller file size.
+        device_id: Optional device serial/device ID. Required when multiple devices are connected.
     """
     try:
-        d = device_manager.get_device()
+        d = _get_device(device_id)
         img = d.screenshot()
         img.save(save_path)
         width, height = img.size
@@ -931,15 +1030,19 @@ def screenshot(save_path: str = "/tmp/screenshot.png") -> str:
 
 
 @mcp.tool()
-def dump_hierarchy(compact: bool = True) -> str:
+def dump_hierarchy(
+    compact: bool = True,
+    device_id: str | None = None,
+) -> str:
     """Dump the current UI hierarchy.
 
     Args:
         compact: If True (default), return a concise one-line-per-element format.
                  If False, return the full XML. Compact mode is 10-50x smaller.
+        device_id: Optional device serial/device ID. Required when multiple devices are connected.
     """
     try:
-        d = device_manager.get_device()
+        d = _get_device(device_id)
         xml_str = d.dump_hierarchy()
         if not compact:
             return xml_str
@@ -1002,15 +1105,20 @@ def _parse_hierarchy_compact(xml_str: str) -> str:
 # ---------------------------------------------------------------------------
 
 @mcp.tool()
-def app_start(package: str, activity: str | None = None) -> str:
+def app_start(
+    package: str,
+    activity: str | None = None,
+    device_id: str | None = None,
+) -> str:
     """Launch an application.
 
     Args:
         package: Package name (e.g. "com.android.settings").
         activity: Activity name (optional). If omitted, launches the default activity.
+        device_id: Optional device serial/device ID. Required when multiple devices are connected.
     """
     try:
-        d = device_manager.get_device()
+        d = _get_device(device_id)
         if activity:
             d.app_start(package, activity)
         else:
@@ -1107,10 +1215,14 @@ def app_list_running() -> str:
 
 
 @mcp.tool()
-def current_app() -> str:
-    """Get information about the currently focused application (package name and activity)."""
+def current_app(device_id: str | None = None) -> str:
+    """Get information about the currently focused application (package name and activity).
+
+    Args:
+        device_id: Optional device serial/device ID. Required when multiple devices are connected.
+    """
     try:
-        d = device_manager.get_device()
+        d = _get_device(device_id)
         info = d.app_current()
         return json.dumps(info, indent=2, ensure_ascii=False, default=str)
     except Exception as e:
@@ -1203,18 +1315,69 @@ def set_clipboard(text: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Diagnostics tools
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def clear_logs(device_id: str | None = None) -> str:
+    """Clear logcat buffers for the target device.
+
+    Args:
+        device_id: Optional ADB serial/device ID. If omitted, uses the currently connected device.
+    """
+    try:
+        serial = _resolve_adb_serial(device_id)
+        return clear_device_logs(serial)
+    except Exception as e:
+        return f"Error: {e}"
+
+
+@mcp.tool()
+def get_logs(
+    package: str | None = None,
+    level: str | None = None,
+    since: str | None = None,
+    lines: int = 200,
+    device_id: str | None = None,
+) -> str:
+    """Get filtered logcat output for the target device.
+
+    Args:
+        package: Optional Android package name to filter logs for.
+        level: Minimum log priority to include. Supports V/D/I/W/E/F/A and full names.
+        since: Optional timestamp filter. Supports ISO-8601, YYYY-MM-DD HH:MM:SS(.sss),
+               or MM-DD HH:MM:SS.sss.
+        lines: Maximum number of matching log lines to return (default 200).
+        device_id: Optional ADB serial/device ID. If omitted, uses the currently connected device.
+    """
+    try:
+        serial = _resolve_adb_serial(device_id)
+        query = LogQuery(
+            serial=serial,
+            package=package,
+            level=level,
+            since=since,
+            lines=lines,
+        )
+        return get_device_logs(query)
+    except Exception as e:
+        return f"Error: {e}"
+
+
+# ---------------------------------------------------------------------------
 # Shell & file tools
 # ---------------------------------------------------------------------------
 
 @mcp.tool()
-def shell(command: str) -> str:
+def shell(command: str, device_id: str | None = None) -> str:
     """Execute a shell command on the device and return the output.
 
     Args:
         command: Shell command to execute (e.g. "ls /sdcard").
+        device_id: Optional device serial/device ID. Required when multiple devices are connected.
     """
     try:
-        d = device_manager.get_device()
+        d = _get_device(device_id)
         result = d.shell(command)
         if isinstance(result, tuple):
             output, exit_code = result
@@ -1243,15 +1406,16 @@ def push_file(local: str, remote: str) -> str:
 
 
 @mcp.tool()
-def pull_file(remote: str, local: str) -> str:
+def pull_file(remote: str, local: str, device_id: str | None = None) -> str:
     """Pull a file from the device to local filesystem.
 
     Args:
         remote: File path on the device (e.g. "/sdcard/file.txt").
         local: Local destination path.
+        device_id: Optional device serial/device ID. Required when multiple devices are connected.
     """
     try:
-        d = device_manager.get_device()
+        d = _get_device(device_id)
         d.pull(remote, local)
         return f"Pulled {remote} -> {local}"
     except Exception as e:
