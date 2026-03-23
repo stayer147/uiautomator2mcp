@@ -70,7 +70,7 @@ pip install -e .
 uiautomator2-mcp
 ```
 
-## Available Tools (36)
+## Available Tools (38)
 
 ### Connection
 | Tool | Description |
@@ -103,7 +103,7 @@ uiautomator2-mcp
 ### Screenshots & UI Hierarchy
 | Tool | Description |
 |------|-------------|
-| `screenshot` | Take a screenshot (base64 PNG) |
+| `screenshot` | Take a screenshot and save it to a file |
 | `dump_hierarchy` | Get XML UI hierarchy |
 
 ### App Management
@@ -129,6 +129,12 @@ uiautomator2-mcp
 | `get_clipboard` | Get clipboard content |
 | `set_clipboard` | Set clipboard content |
 
+### Diagnostics
+| Tool | Description |
+|------|-------------|
+| `clear_logs` | Clear logcat buffers on the device |
+| `get_logs` | Read filtered logcat output by package, level, timestamp, and line count |
+
 ### Shell & Files
 | Tool | Description |
 |------|-------------|
@@ -145,6 +151,14 @@ uiautomator2-mcp
 5. **Double-tap directly via XPath** when needed, e.g. `double_tap_element(xpath="//android.widget.TextView[@text='Gallery']")`
 6. **Type text** into input fields
 7. **Take another screenshot** to verify results
+
+## Example bug-report workflow
+
+1. **Clear old logs**: `clear_logs()`
+2. **Reproduce the bug** using the UI interaction tools
+3. **Capture error logs**: `get_logs(level="E", package="com.example.app")`
+4. **Take a screenshot** of the failing state
+5. **Dump hierarchy** if you need the exact UI structure
 
 ## Publishing to PyPI
 

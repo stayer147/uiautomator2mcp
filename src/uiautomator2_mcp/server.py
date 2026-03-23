@@ -12,6 +12,11 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from uiautomator2_mcp.device_manager import device_manager
+from uiautomator2_mcp.logcat import (
+    LogQuery,
+    clear_logs as clear_device_logs,
+    get_logs as get_device_logs,
+)
 
 mcp = FastMCP(
     "uiautomator2",
@@ -157,6 +162,13 @@ def _center_from_info(info: dict[str, Any], *, action: str = "element action") -
         return (left + right) // 2, (top + bottom) // 2
 
     raise ValueError(error_message)
+
+
+def _resolve_adb_serial(device_id: str | None = None) -> str:
+    """Resolve the target ADB serial for diagnostics tools."""
+    if device_id is not None and device_id.strip():
+        return device_id.strip()
+    return device_manager.get_serial()
 
 
 # ---------------------------------------------------------------------------
@@ -1198,6 +1210,56 @@ def set_clipboard(text: str) -> str:
         d = device_manager.get_device()
         d.set_clipboard(text)
         return f"Clipboard set to: {text!r}"
+    except Exception as e:
+        return f"Error: {e}"
+
+
+# ---------------------------------------------------------------------------
+# Diagnostics tools
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def clear_logs(device_id: str | None = None) -> str:
+    """Clear logcat buffers for the target device.
+
+    Args:
+        device_id: Optional ADB serial/device ID. If omitted, uses the currently connected device.
+    """
+    try:
+        serial = _resolve_adb_serial(device_id)
+        return clear_device_logs(serial)
+    except Exception as e:
+        return f"Error: {e}"
+
+
+@mcp.tool()
+def get_logs(
+    package: str | None = None,
+    level: str | None = None,
+    since: str | None = None,
+    lines: int = 200,
+    device_id: str | None = None,
+) -> str:
+    """Get filtered logcat output for the target device.
+
+    Args:
+        package: Optional Android package name to filter logs for.
+        level: Minimum log priority to include. Supports V/D/I/W/E/F/A and full names.
+        since: Optional timestamp filter. Supports ISO-8601, YYYY-MM-DD HH:MM:SS(.sss),
+               or MM-DD HH:MM:SS.sss.
+        lines: Maximum number of matching log lines to return (default 200).
+        device_id: Optional ADB serial/device ID. If omitted, uses the currently connected device.
+    """
+    try:
+        serial = _resolve_adb_serial(device_id)
+        query = LogQuery(
+            serial=serial,
+            package=package,
+            level=level,
+            since=since,
+            lines=lines,
+        )
+        return get_device_logs(query)
     except Exception as e:
         return f"Error: {e}"
 
