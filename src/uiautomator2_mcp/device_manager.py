@@ -34,8 +34,9 @@ class DeviceManager:
         resolved_serial = serial or self._resolve_default_serial()
         device = u2.connect(resolved_serial)
         resolved_serial = self._resolve_device_serial(device, fallback=resolved_serial)
+        info = device.info
         self._devices[resolved_serial] = device
-        return resolved_serial, device.info
+        return resolved_serial, info
 
     def get_device(self, device_id: str | None = None) -> u2.Device:
         """Get a connected device, requiring explicit selection if ambiguous."""
