@@ -154,7 +154,7 @@ uiautomator2-mcp
 
 ## Example Workflow
 
-When only one device is connected in the MCP session, tools can omit `device_id`. If you connect multiple devices, pass `device_id` explicitly to tools that support it such as `device_info`, `tap`, `swipe`, `press_key`, `screenshot`, `dump_hierarchy`, `app_start`, `current_app`, `shell`, `pull_file`, `clear_logs`, and `get_logs`.
+When only one device is connected in the MCP session, tools can omit `device_id`. If you connect multiple devices, pass `device_id` explicitly. Multi-device targeting is now supported consistently across the interactive UI, app-management, device-control, watcher, clipboard, and file-transfer tools, in addition to diagnostics tools like `clear_logs` and `get_logs`.
 
 1. **List available devices**: `list_devices()`
 2. **Connect** to one device: `connect("emulator-5554")`

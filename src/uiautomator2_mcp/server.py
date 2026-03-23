@@ -401,15 +401,16 @@ def tap(x: int, y: int, device_id: str | None = None) -> str:
 
 
 @mcp.tool()
-def double_tap(x: int, y: int) -> str:
+def double_tap(x: int, y: int, device_id: str | None = None) -> str:
     """Double-tap at the given screen coordinates.
 
     Args:
         x: Horizontal coordinate.
         y: Vertical coordinate.
+        device_id: Optional device serial/device ID. Required when multiple devices are connected.
     """
     try:
-        d = device_manager.get_device()
+        d = _get_device(device_id)
         d.double_click(x, y)
         return f"Double-tapped at ({x}, {y})."
     except Exception as e:
@@ -417,16 +418,22 @@ def double_tap(x: int, y: int) -> str:
 
 
 @mcp.tool()
-def long_tap(x: int, y: int, duration: float = 1.0) -> str:
+def long_tap(
+    x: int,
+    y: int,
+    duration: float = 1.0,
+    device_id: str | None = None,
+) -> str:
     """Long-press at the given screen coordinates.
 
     Args:
         x: Horizontal coordinate.
         y: Vertical coordinate.
         duration: Hold duration in seconds (default 1.0).
+        device_id: Optional device serial/device ID. Required when multiple devices are connected.
     """
     try:
-        d = device_manager.get_device()
+        d = _get_device(device_id)
         d.long_click(x, y, duration=duration)
         return f"Long-tapped at ({x}, {y}) for {duration}s."
     except Exception as e:
@@ -467,6 +474,7 @@ def drag(
     end_x: int,
     end_y: int,
     duration: float = 0.5,
+    device_id: str | None = None,
 ) -> str:
     """Drag from one point to another.
 
@@ -476,9 +484,10 @@ def drag(
         end_x: End horizontal coordinate.
         end_y: End vertical coordinate.
         duration: Drag duration in seconds (default 0.5).
+        device_id: Optional device serial/device ID. Required when multiple devices are connected.
     """
     try:
-        d = device_manager.get_device()
+        d = _get_device(device_id)
         d.drag(start_x, start_y, end_x, end_y, duration=duration)
         return f"Dragged from ({start_x}, {start_y}) to ({end_x}, {end_y})."
     except Exception as e:
@@ -486,14 +495,15 @@ def drag(
 
 
 @mcp.tool()
-def input_text(text: str) -> str:
+def input_text(text: str, device_id: str | None = None) -> str:
     """Type text using the keyboard. The focused input field will receive the text.
 
     Args:
         text: The text to type.
+        device_id: Optional device serial/device ID. Required when multiple devices are connected.
     """
     try:
-        d = device_manager.get_device()
+        d = _get_device(device_id)
         d.send_keys(text)
         return f"Typed: {text!r}"
     except Exception as e:
@@ -560,6 +570,7 @@ def find_element(
     class_name: str | None = None,
     description: str | None = None,
     xpath: str | None = None,
+    device_id: str | None = None,
 ) -> str:
     """Find a UI element and return its properties (bounds, text, class, etc.).
 
@@ -571,9 +582,10 @@ def find_element(
         class_name: Class name (e.g. "android.widget.Button").
         description: Content description.
         xpath: XPath expression (e.g. "//android.widget.TextView[@text='Hello']").
+        device_id: Optional device serial/device ID. Required when multiple devices are connected.
     """
     try:
-        d = device_manager.get_device()
+        d = _get_device(device_id)
         mode, query, elem = _locate_element(
             d,
             text=text,
@@ -600,6 +612,7 @@ def tap_element(
     class_name: str | None = None,
     description: str | None = None,
     xpath: str | None = None,
+    device_id: str | None = None,
 ) -> str:
     """Find a UI element and tap on it.
 
@@ -611,9 +624,10 @@ def tap_element(
         class_name: Class name (e.g. "android.widget.Button").
         description: Content description.
         xpath: XPath expression.
+        device_id: Optional device serial/device ID. Required when multiple devices are connected.
     """
     try:
-        d = device_manager.get_device()
+        d = _get_device(device_id)
         mode, query, elem = _locate_element(
             d,
             text=text,
@@ -637,13 +651,17 @@ def double_tap_element(
     class_name: str | None = None,
     description: str | None = None,
     xpath: str | None = None,
+    device_id: str | None = None,
 ) -> str:
     """Find a UI element and double-tap its center.
 
     Provide at least one selector. If xpath is given, it takes precedence.
+
+    Args:
+        device_id: Optional device serial/device ID. Required when multiple devices are connected.
     """
     try:
-        d = device_manager.get_device()
+        d = _get_device(device_id)
         mode, query, elem = _locate_element(
             d,
             text=text,
@@ -668,6 +686,7 @@ def set_element_text(
     class_name: str | None = None,
     description: str | None = None,
     xpath: str | None = None,
+    device_id: str | None = None,
 ) -> str:
     """Set text in an input field identified by a selector.
 
@@ -678,9 +697,10 @@ def set_element_text(
         class_name: Class name of the element.
         description: Content description of the element.
         xpath: XPath expression.
+        device_id: Optional device serial/device ID. Required when multiple devices are connected.
     """
     try:
-        d = device_manager.get_device()
+        d = _get_device(device_id)
         if xpath:
             elem = d.xpath(xpath)
             if elem.exists:
@@ -759,6 +779,7 @@ def element_exists(
     class_name: str | None = None,
     description: str | None = None,
     xpath: str | None = None,
+    device_id: str | None = None,
 ) -> str:
     """Check whether a UI element exists on screen.
 
@@ -768,9 +789,10 @@ def element_exists(
         class_name: Class name.
         description: Content description.
         xpath: XPath expression.
+        device_id: Optional device serial/device ID. Required when multiple devices are connected.
     """
     try:
-        d = device_manager.get_device()
+        d = _get_device(device_id)
         mode, query, elem = _locate_element(
             d,
             text=text,
@@ -792,6 +814,7 @@ def wait_element(
     description: str | None = None,
     xpath: str | None = None,
     timeout: float = 10.0,
+    device_id: str | None = None,
 ) -> str:
     """Wait for a UI element to appear on screen.
 
@@ -802,9 +825,10 @@ def wait_element(
         description: Content description.
         xpath: XPath expression.
         timeout: Maximum wait time in seconds (default 10).
+        device_id: Optional device serial/device ID. Required when multiple devices are connected.
     """
     try:
-        d = device_manager.get_device()
+        d = _get_device(device_id)
         mode, query, elem = _locate_element(
             d,
             text=text,
@@ -1086,6 +1110,7 @@ def scroll_to_element(
     direction: str = "vertical",
     max_swipes: int = 50,
     reset_first: bool = True,
+    device_id: str | None = None,
 ) -> str:
     """Scroll a scrollable container until a target element is found.
 
@@ -1102,12 +1127,13 @@ def scroll_to_element(
         max_swipes: Maximum number of swipes when resetting to beginning (default 50).
         reset_first: If True (default), scroll to beginning before searching.
                      Set to False if you know the element is ahead of current position.
+        device_id: Optional device serial/device ID. Required when multiple devices are connected.
     """
     try:
         selector = _build_selector(text, resource_id, class_name, description)
         if not selector:
             return "Error: provide at least one selector (text, resource_id, class_name, description)."
-        d = device_manager.get_device()
+        d = _get_device(device_id)
         scrollable = d(scrollable=True)
         if not scrollable.exists:
             return "Error: no scrollable container found on screen."
@@ -1129,6 +1155,7 @@ def scroll(
     direction: str = "forward",
     orientation: str = "vertical",
     steps: int = 55,
+    device_id: str | None = None,
 ) -> str:
     """Scroll the screen in a given direction.
 
@@ -1138,9 +1165,10 @@ def scroll(
         direction: "forward" (default) or "backward".
         orientation: "vertical" (default) or "horizontal".
         steps: Number of steps (higher = slower scroll). Default 55.
+        device_id: Optional device serial/device ID. Required when multiple devices are connected.
     """
     try:
-        d = device_manager.get_device()
+        d = _get_device(device_id)
         scrollable = d(scrollable=True)
         if not scrollable.exists:
             return "Error: no scrollable container found on screen."
@@ -1159,6 +1187,7 @@ def fling(
     direction: str = "forward",
     orientation: str = "vertical",
     max_swipes: int = 500,
+    device_id: str | None = None,
 ) -> str:
     """Fling (fast scroll) the screen. Faster than scroll, but less precise.
 
@@ -1166,9 +1195,10 @@ def fling(
         direction: "forward", "backward", "toBeginning", or "toEnd". Default "forward".
         orientation: "vertical" (default) or "horizontal".
         max_swipes: Maximum swipes for toBeginning/toEnd (default 500).
+        device_id: Optional device serial/device ID. Required when multiple devices are connected.
     """
     try:
-        d = device_manager.get_device()
+        d = _get_device(device_id)
         scrollable = d(scrollable=True)
         if not scrollable.exists:
             return "Error: no scrollable container found on screen."
@@ -1201,6 +1231,7 @@ def wait_element_gone(
     description: str | None = None,
     xpath: str | None = None,
     timeout: float = 10.0,
+    device_id: str | None = None,
 ) -> str:
     """Wait for a UI element to disappear from the screen.
 
@@ -1213,9 +1244,10 @@ def wait_element_gone(
         description: Content description.
         xpath: XPath expression.
         timeout: Maximum wait time in seconds (default 10).
+        device_id: Optional device serial/device ID. Required when multiple devices are connected.
     """
     try:
-        d = device_manager.get_device()
+        d = _get_device(device_id)
         if xpath:
             gone = d.xpath(xpath).wait_gone(timeout=timeout)
             if gone:
@@ -1240,6 +1272,7 @@ def wait_element_gone(
 def get_toast(
     wait_timeout: float = 10.0,
     reset_first: bool = True,
+    device_id: str | None = None,
 ) -> str:
     """Wait for and capture a toast message on screen.
 
@@ -1249,9 +1282,10 @@ def get_toast(
     Args:
         wait_timeout: Maximum seconds to wait for a toast (default 10).
         reset_first: If True (default), clear any previously cached toast first.
+        device_id: Optional device serial/device ID. Required when multiple devices are connected.
     """
     try:
-        d = device_manager.get_device()
+        d = _get_device(device_id)
         if reset_first:
             d.toast.reset()
         message = d.toast.get_message(wait_timeout=wait_timeout, default=None)
@@ -1272,6 +1306,7 @@ def watcher_add(
     xpath_conditions: list[str],
     action: str = "click",
     press_key: str | None = None,
+    device_id: str | None = None,
 ) -> str:
     """Register a watcher that auto-handles UI elements when they appear.
 
@@ -1285,9 +1320,10 @@ def watcher_add(
                           The action is performed on the LAST element in the list.
         action: What to do when triggered — "click" (default) or "press".
         press_key: Key to press if action is "press" (e.g. "back", "home").
+        device_id: Optional device serial/device ID. Required when multiple devices are connected.
     """
     try:
-        d = device_manager.get_device()
+        d = _get_device(device_id)
         w = d.watcher(name)
         for xpath in xpath_conditions:
             w = w.when(xpath)
@@ -1303,16 +1339,17 @@ def watcher_add(
 
 
 @mcp.tool()
-def watcher_start(interval: float = 2.0) -> str:
+def watcher_start(interval: float = 2.0, device_id: str | None = None) -> str:
     """Start the background watcher that polls for registered conditions.
 
     Must be called after adding watchers with watcher_add.
 
     Args:
         interval: Polling interval in seconds (default 2.0). Lower = more responsive but more CPU.
+        device_id: Optional device serial/device ID. Required when multiple devices are connected.
     """
     try:
-        d = device_manager.get_device()
+        d = _get_device(device_id)
         if d.watcher.running():
             return "Watcher is already running."
         d.watcher.start(interval=interval)
@@ -1322,10 +1359,14 @@ def watcher_start(interval: float = 2.0) -> str:
 
 
 @mcp.tool()
-def watcher_stop() -> str:
-    """Stop the background watcher."""
+def watcher_stop(device_id: str | None = None) -> str:
+    """Stop the background watcher.
+
+    Args:
+        device_id: Optional device serial/device ID. Required when multiple devices are connected.
+    """
     try:
-        d = device_manager.get_device()
+        d = _get_device(device_id)
         if not d.watcher.running():
             return "Watcher is not running."
         d.watcher.stop()
@@ -1335,14 +1376,15 @@ def watcher_stop() -> str:
 
 
 @mcp.tool()
-def watcher_remove(name: str | None = None) -> str:
+def watcher_remove(name: str | None = None, device_id: str | None = None) -> str:
     """Remove registered watchers.
 
     Args:
         name: Name of a specific watcher to remove. If not provided, removes ALL watchers.
+        device_id: Optional device serial/device ID. Required when multiple devices are connected.
     """
     try:
-        d = device_manager.get_device()
+        d = _get_device(device_id)
         if name:
             d.watcher.remove(name)
             return f"Watcher '{name}' removed."
@@ -1486,14 +1528,15 @@ def app_start(
 
 
 @mcp.tool()
-def app_stop(package: str) -> str:
+def app_stop(package: str, device_id: str | None = None) -> str:
     """Force-stop an application.
 
     Args:
         package: Package name (e.g. "com.android.settings").
+        device_id: Optional device serial/device ID. Required when multiple devices are connected.
     """
     try:
-        d = device_manager.get_device()
+        d = _get_device(device_id)
         d.app_stop(package)
         return f"Stopped {package}."
     except Exception as e:
@@ -1501,14 +1544,15 @@ def app_stop(package: str) -> str:
 
 
 @mcp.tool()
-def app_install(path: str) -> str:
+def app_install(path: str, device_id: str | None = None) -> str:
     """Install an APK file on the device.
 
     Args:
         path: Local path to the APK file.
+        device_id: Optional device serial/device ID. Required when multiple devices are connected.
     """
     try:
-        d = device_manager.get_device()
+        d = _get_device(device_id)
         d.app_install(path)
         return f"Installed APK from {path}."
     except Exception as e:
@@ -1516,14 +1560,15 @@ def app_install(path: str) -> str:
 
 
 @mcp.tool()
-def app_uninstall(package: str) -> str:
+def app_uninstall(package: str, device_id: str | None = None) -> str:
     """Uninstall an application from the device.
 
     Args:
         package: Package name to uninstall.
+        device_id: Optional device serial/device ID. Required when multiple devices are connected.
     """
     try:
-        d = device_manager.get_device()
+        d = _get_device(device_id)
         d.app_uninstall(package)
         return f"Uninstalled {package}."
     except Exception as e:
@@ -1531,14 +1576,15 @@ def app_uninstall(package: str) -> str:
 
 
 @mcp.tool()
-def app_clear(package: str) -> str:
+def app_clear(package: str, device_id: str | None = None) -> str:
     """Clear all data for an application.
 
     Args:
         package: Package name.
+        device_id: Optional device serial/device ID. Required when multiple devices are connected.
     """
     try:
-        d = device_manager.get_device()
+        d = _get_device(device_id)
         d.app_clear(package)
         return f"Cleared data for {package}."
     except Exception as e:
@@ -1546,14 +1592,15 @@ def app_clear(package: str) -> str:
 
 
 @mcp.tool()
-def app_info(package: str) -> str:
+def app_info(package: str, device_id: str | None = None) -> str:
     """Get information about an installed application.
 
     Args:
         package: Package name.
+        device_id: Optional device serial/device ID. Required when multiple devices are connected.
     """
     try:
-        d = device_manager.get_device()
+        d = _get_device(device_id)
         info = d.app_info(package)
         return json.dumps(info, indent=2, ensure_ascii=False, default=str)
     except Exception as e:
@@ -1561,10 +1608,14 @@ def app_info(package: str) -> str:
 
 
 @mcp.tool()
-def app_list_running() -> str:
-    """List all currently running applications. Returns a list of package names."""
+def app_list_running(device_id: str | None = None) -> str:
+    """List all currently running applications. Returns a list of package names.
+
+    Args:
+        device_id: Optional device serial/device ID. Required when multiple devices are connected.
+    """
     try:
-        d = device_manager.get_device()
+        d = _get_device(device_id)
         apps = d.app_list_running()
         return json.dumps(apps, indent=2)
     except Exception as e:
@@ -1591,10 +1642,14 @@ def current_app(device_id: str | None = None) -> str:
 # ---------------------------------------------------------------------------
 
 @mcp.tool()
-def screen_on() -> str:
-    """Turn the screen on (wake up the device)."""
+def screen_on(device_id: str | None = None) -> str:
+    """Turn the screen on (wake up the device).
+
+    Args:
+        device_id: Optional device serial/device ID. Required when multiple devices are connected.
+    """
     try:
-        d = device_manager.get_device()
+        d = _get_device(device_id)
         d.screen_on()
         return "Screen turned on."
     except Exception as e:
@@ -1602,10 +1657,14 @@ def screen_on() -> str:
 
 
 @mcp.tool()
-def screen_off() -> str:
-    """Turn the screen off."""
+def screen_off(device_id: str | None = None) -> str:
+    """Turn the screen off.
+
+    Args:
+        device_id: Optional device serial/device ID. Required when multiple devices are connected.
+    """
     try:
-        d = device_manager.get_device()
+        d = _get_device(device_id)
         d.screen_off()
         return "Screen turned off."
     except Exception as e:
@@ -1613,10 +1672,14 @@ def screen_off() -> str:
 
 
 @mcp.tool()
-def unlock() -> str:
-    """Unlock the device (turns screen on and swipes to unlock)."""
+def unlock(device_id: str | None = None) -> str:
+    """Unlock the device (turns screen on and swipes to unlock).
+
+    Args:
+        device_id: Optional device serial/device ID. Required when multiple devices are connected.
+    """
     try:
-        d = device_manager.get_device()
+        d = _get_device(device_id)
         d.unlock()
         return "Device unlocked."
     except Exception as e:
@@ -1624,10 +1687,14 @@ def unlock() -> str:
 
 
 @mcp.tool()
-def open_notification() -> str:
-    """Open the notification panel."""
+def open_notification(device_id: str | None = None) -> str:
+    """Open the notification panel.
+
+    Args:
+        device_id: Optional device serial/device ID. Required when multiple devices are connected.
+    """
     try:
-        d = device_manager.get_device()
+        d = _get_device(device_id)
         d.open_notification()
         return "Notification panel opened."
     except Exception as e:
@@ -1635,10 +1702,14 @@ def open_notification() -> str:
 
 
 @mcp.tool()
-def open_quick_settings() -> str:
-    """Open the quick settings panel."""
+def open_quick_settings(device_id: str | None = None) -> str:
+    """Open the quick settings panel.
+
+    Args:
+        device_id: Optional device serial/device ID. Required when multiple devices are connected.
+    """
     try:
-        d = device_manager.get_device()
+        d = _get_device(device_id)
         d.open_quick_settings()
         return "Quick settings opened."
     except Exception as e:
@@ -1646,10 +1717,14 @@ def open_quick_settings() -> str:
 
 
 @mcp.tool()
-def get_clipboard() -> str:
-    """Get the current clipboard content."""
+def get_clipboard(device_id: str | None = None) -> str:
+    """Get the current clipboard content.
+
+    Args:
+        device_id: Optional device serial/device ID. Required when multiple devices are connected.
+    """
     try:
-        d = device_manager.get_device()
+        d = _get_device(device_id)
         content = d.clipboard
         return content or "(clipboard is empty)"
     except Exception as e:
@@ -1657,14 +1732,15 @@ def get_clipboard() -> str:
 
 
 @mcp.tool()
-def set_clipboard(text: str) -> str:
+def set_clipboard(text: str, device_id: str | None = None) -> str:
     """Set the device clipboard content.
 
     Args:
         text: Text to put in the clipboard.
+        device_id: Optional device serial/device ID. Required when multiple devices are connected.
     """
     try:
-        d = device_manager.get_device()
+        d = _get_device(device_id)
         d.set_clipboard(text)
         return f"Clipboard set to: {text!r}"
     except Exception as e:
@@ -1747,15 +1823,16 @@ def shell(command: str, device_id: str | None = None) -> str:
 
 
 @mcp.tool()
-def push_file(local: str, remote: str) -> str:
+def push_file(local: str, remote: str, device_id: str | None = None) -> str:
     """Push a local file to the device.
 
     Args:
         local: Local file path.
         remote: Destination path on the device (e.g. "/sdcard/file.txt").
+        device_id: Optional device serial/device ID. Required when multiple devices are connected.
     """
     try:
-        d = device_manager.get_device()
+        d = _get_device(device_id)
         d.push(local, remote)
         return f"Pushed {local} -> {remote}"
     except Exception as e:
