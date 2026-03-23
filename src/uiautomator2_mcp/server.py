@@ -6,9 +6,10 @@ import base64
 import io
 import json
 import os
+from pathlib import Path
 import re
 import time
-from typing import Any
+from typing import Any, cast
 from xml.etree import ElementTree as ET
 
 from mcp import types
@@ -141,6 +142,7 @@ def _format_element_info(info: dict[str, Any]) -> str:
     """Format element info as readable JSON."""
     return json.dumps(info, indent=2, ensure_ascii=False)
 
+
 def _normalize_image_format(image_format: str | None, *, save_path: str | None = None) -> str:
     """Normalize requested image format to a Pillow-friendly value."""
     format_hint = image_format
@@ -212,6 +214,26 @@ def _parse_bounds(bounds: str) -> dict[str, int] | None:
         return None
     left, top, right, bottom = (int(value) for value in match.groups())
     return {"left": left, "top": top, "right": right, "bottom": bottom}
+
+
+def _parse_bounds_tuple(raw_bounds: Any, *, error_message: str) -> tuple[int, int, int, int]:
+    """Parse bounds from dict or Android bounds string into a fixed 4-tuple."""
+    if isinstance(raw_bounds, dict):
+        keys = ("left", "top", "right", "bottom")
+        if all(isinstance(raw_bounds.get(key), int) for key in keys):
+            return cast(
+                tuple[int, int, int, int],
+                tuple(raw_bounds[key] for key in keys),
+            )
+        raise ValueError(error_message)
+
+    if isinstance(raw_bounds, str):
+        parsed = _parse_bounds(raw_bounds)
+        if parsed is None:
+            raise ValueError(error_message)
+        return parsed["left"], parsed["top"], parsed["right"], parsed["bottom"]
+
+    raise ValueError(error_message)
 
 
 def _ui_tree_elements(xml_str: str) -> list[dict[str, Any]]:
@@ -317,29 +339,14 @@ def _center_from_info(info: dict[str, Any], *, action: str = "element action") -
     """
     error_message = f"Cannot resolve element bounds for {action}"
 
-    def _parse_bounds(raw_bounds: Any) -> tuple[int, int, int, int]:
-        if isinstance(raw_bounds, dict):
-            keys = ("left", "top", "right", "bottom")
-            if all(isinstance(raw_bounds.get(key), int) for key in keys):
-                return (
-                    raw_bounds["left"],
-                    raw_bounds["top"],
-                    raw_bounds["right"],
-                    raw_bounds["bottom"],
-                )
-            raise ValueError(error_message)
-        if isinstance(raw_bounds, str):
-            match = re.fullmatch(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", raw_bounds.strip())
-            if not match:
-                raise ValueError(error_message)
-            return tuple(int(part) for part in match.groups())
-        raise ValueError(error_message)
-
     for raw_bounds in (info.get("visibleBounds"), info.get("bounds")):
         if raw_bounds is None:
             continue
         try:
-            left, top, right, bottom = _parse_bounds(raw_bounds)
+            left, top, right, bottom = _parse_bounds_tuple(
+                raw_bounds,
+                error_message=error_message,
+            )
         except ValueError:
             continue
         if right < left or bottom < top:
@@ -1526,6 +1533,7 @@ def screenshot(
         width, height = img.size
 
         if effective_save_path is not None:
+            Path(effective_save_path).parent.mkdir(parents=True, exist_ok=True)
             with open(effective_save_path, "wb") as f:
                 f.write(encoded)
 
@@ -1602,9 +1610,7 @@ def get_ui_tree(
 
 def _parse_hierarchy_compact(xml_str: str) -> str:
     """Parse UI hierarchy XML into a compact text format."""
-    from lxml import etree
-
-    root = etree.fromstring(xml_str.encode("utf-8"))
+    root = ET.fromstring(xml_str)
     lines: list[str] = []
     idx = 0
     for node in root.iter("node"):
@@ -1616,14 +1622,8 @@ def _parse_hierarchy_compact(xml_str: str) -> str:
         clickable = node.get("clickable", "false")
 
         # Skip empty containers that add noise
-        if not text and not resource_id and not description:
-            if class_name in (
-                "android.view.View",
-                "android.widget.FrameLayout",
-                "android.widget.LinearLayout",
-                "android.widget.RelativeLayout",
-            ):
-                continue
+        if _is_noise_container(text, resource_id, description, class_name):
+            continue
 
         parts = [f"[{idx}]"]
         # Short class name (strip android.widget. prefix)
@@ -1647,6 +1647,23 @@ def _parse_hierarchy_compact(xml_str: str) -> str:
         idx += 1
 
     return "\n".join(lines)
+
+
+def _is_noise_container(
+    text: str,
+    resource_id: str,
+    description: str,
+    class_name: str,
+) -> bool:
+    """Return whether a node is an empty container that adds little signal."""
+    if text or resource_id or description:
+        return False
+    return class_name in {
+        "android.view.View",
+        "android.widget.FrameLayout",
+        "android.widget.LinearLayout",
+        "android.widget.RelativeLayout",
+    }
 
 
 # ---------------------------------------------------------------------------

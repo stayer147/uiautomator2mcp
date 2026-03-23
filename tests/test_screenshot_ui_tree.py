@@ -39,6 +39,22 @@ def test_screenshot_saves_resized_jpeg(tmp_path: Path) -> None:
     assert saved.format == 'JPEG'
 
 
+def test_screenshot_creates_parent_directories_for_nested_save_path(tmp_path: Path) -> None:
+    image = Image.new('RGB', (20, 10), color='green')
+    device = Mock()
+    device.screenshot.return_value = image
+    save_path = tmp_path / 'nested' / 'screens' / 'screen.png'
+
+    with patch('uiautomator2_mcp.server._get_device', return_value=device):
+        result = server.screenshot(save_path=str(save_path), device_id='serial-3')
+
+    assert 'Screenshot saved to' in result
+    assert save_path.exists()
+    saved = Image.open(save_path)
+    assert saved.size == (20, 10)
+    assert saved.format == 'PNG'
+
+
 def test_screenshot_can_return_inline_image_content_without_writing_file() -> None:
     image = Image.new('RGB', (40, 20), color='blue')
     device = Mock()
@@ -96,3 +112,12 @@ def test_get_ui_tree_can_render_json_string() -> None:
     payload = json.loads(result)
     assert payload[1]['resource_id'] == 'com.example:id/login'
     assert payload[2]['selected'] is True
+
+
+def test_parse_hierarchy_compact_skips_empty_container_noise() -> None:
+    compact = server._parse_hierarchy_compact(_XML)
+
+    lines = compact.splitlines()
+    assert len(lines) == 2
+    assert lines[0] == '[0] Button "Login" desc="Sign in" #login [clickable] [10,20][110,120]'
+    assert lines[1] == '[1] CheckBox "Remember me" #remember [clickable] [10,140][220,200]'
