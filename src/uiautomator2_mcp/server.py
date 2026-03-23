@@ -7,15 +7,25 @@ import io
 import json
 import os
 import re
+import time
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
+from uiautomator2_mcp.adb_tools import (
+    list_avds as list_available_avds,
+    start_emulator as start_android_emulator,
+)
 from uiautomator2_mcp.device_manager import device_manager
+from uiautomator2_mcp.logcat import (
+    LogQuery,
+    clear_logs as clear_device_logs,
+    get_logs as get_device_logs,
+)
 
 mcp = FastMCP(
     "uiautomator2",
-    instructions="Android device automation via uiautomator2. Connect to a device first, then use tools to interact with it.",
+    instructions="Android device automation via uiautomator2. Use list_devices() to choose a target, connect() one or more devices, then pass device_id when multiple devices are connected.",
 )
 
 
@@ -40,6 +50,89 @@ def _build_selector(
     if description is not None:
         selector["description"] = description
     return selector
+
+
+def _resolve_locator(
+    text: str | None = None,
+    resource_id: str | None = None,
+    class_name: str | None = None,
+    description: str | None = None,
+    xpath: str | None = None,
+    *,
+    error_message: str = "Error: provide at least one selector.",
+) -> tuple[str, str | dict[str, str]]:
+    """Resolve a query into either xpath or selector mode."""
+    if xpath:
+        return "xpath", xpath
+    selector = _build_selector(text, resource_id, class_name, description)
+    if not selector:
+        raise ValueError(error_message)
+    return "selector", selector
+
+
+def _locate_element(
+    d: Any,
+    *,
+    text: str | None = None,
+    resource_id: str | None = None,
+    class_name: str | None = None,
+    description: str | None = None,
+    xpath: str | None = None,
+    error_message: str = "Error: provide at least one selector.",
+) -> tuple[str, str | dict[str, str], Any]:
+    """Locate an element using selector fields or XPath."""
+    mode, query = _resolve_locator(
+        text=text,
+        resource_id=resource_id,
+        class_name=class_name,
+        description=description,
+        xpath=xpath,
+        error_message=error_message,
+    )
+    element = d.xpath(query) if mode == "xpath" else d(**query)
+    return mode, query, element
+
+
+def _locator_label(mode: str, query: str | dict[str, str]) -> str:
+    """Render a human-readable locator description."""
+    return f"xpath: {query}" if mode == "xpath" else f"selector: {query}"
+
+
+def _element_exists(element: Any) -> bool:
+    """Return whether a resolved element exists."""
+    return bool(element.exists)
+
+
+def _element_info(element: Any, mode: str) -> dict[str, Any]:
+    """Fetch element info for selector or XPath elements."""
+    if mode == "xpath":
+        node = element.get()
+        if node is None or not hasattr(node, "info"):
+            raise ValueError("Cannot resolve element info.")
+        return node.info
+    return element.info
+
+
+def _wait_on_element(element: Any, mode: str, *, timeout: float, gone: bool = False) -> bool:
+    """Wait for an element to appear or disappear."""
+    if mode == "xpath":
+        return element.wait_gone(timeout=timeout) if gone else element.wait(timeout=timeout)
+    return element.wait_gone(timeout=timeout) if gone else element.wait(timeout=timeout)
+
+
+def _tap_resolved_element(d: Any, element: Any, mode: str, *, double: bool = False) -> None:
+    """Tap or double-tap the center of a resolved element."""
+    info = _element_info(element, mode)
+    x, y = _center_from_info(info, action="double tap" if double else "tap")
+    if double:
+        d.double_click(x, y)
+    else:
+        d.click(x, y)
+
+
+def _sleep_seconds(seconds: float) -> None:
+    """Sleep for a non-negative number of seconds."""
+    time.sleep(max(0.0, seconds))
 
 
 def _format_element_info(info: dict[str, Any]) -> str:
@@ -159,6 +252,18 @@ def _center_from_info(info: dict[str, Any], *, action: str = "element action") -
     raise ValueError(error_message)
 
 
+def _get_device(device_id: str | None = None) -> Any:
+    """Resolve a connected device, requiring device_id when ambiguous."""
+    return device_manager.get_device(device_id)
+
+
+def _resolve_adb_serial(device_id: str | None = None) -> str:
+    """Resolve the target ADB serial for diagnostics tools."""
+    if device_id is not None and device_id.strip():
+        return device_id.strip()
+    return device_manager.get_serial(device_id)
+
+
 # ---------------------------------------------------------------------------
 # Connection tools
 # ---------------------------------------------------------------------------
@@ -169,32 +274,102 @@ def connect(serial: str | None = None) -> str:
 
     Args:
         serial: Device serial number or IP address (e.g. "emulator-5554" or "192.168.1.100").
-                If not provided, connects to the first available device.
+                If not provided, connects to the only available ready adb device.
     """
     try:
-        info = device_manager.connect(serial)
-        target = serial or "default device"
-        return f"Connected to {target}.\n\nDevice info:\n{_format_element_info(info)}"
+        resolved_serial, info = device_manager.connect(serial)
+        return (
+            f"Connected to {resolved_serial}.\n\n"
+            f"Connected devices in session: {device_manager.connected_device_ids()}\n\n"
+            f"Device info:\n{_format_element_info(info)}"
+        )
     except Exception as e:
         return f"Failed to connect: {e}"
 
 
 @mcp.tool()
-def disconnect() -> str:
-    """Disconnect from the current Android device."""
-    device_manager.disconnect()
-    return "Disconnected."
+def disconnect(device_id: str | None = None) -> str:
+    """Disconnect from one connected Android device.
+
+    Args:
+        device_id: Optional device serial/device ID. Required when multiple devices are connected.
+    """
+    try:
+        serial = device_manager.disconnect(device_id)
+        remaining = device_manager.connected_device_ids()
+        return (
+            f"Disconnected {serial}. Remaining connected devices: {remaining or '(none)'}"
+        )
+    except Exception as e:
+        return f"Error: {e}"
 
 
 @mcp.tool()
-def device_info() -> str:
-    """Get detailed information about the connected device (model, screen size, Android version, etc.)."""
+def list_devices() -> str:
+    """List devices currently visible to adb."""
     try:
-        d = device_manager.get_device()
+        devices = device_manager.list_devices()
+        session_devices = set(device_manager.connected_device_ids())
+        enriched = []
+        for device in devices:
+            enriched.append(
+                {
+                    **device,
+                    "connected_in_mcp_session": device.get("serial") in session_devices,
+                }
+            )
+        return json.dumps(enriched, indent=2, ensure_ascii=False)
+    except Exception as e:
+        return f"Error: {e}"
+
+
+@mcp.tool()
+def list_avds() -> str:
+    """List configured Android Virtual Devices available to the emulator."""
+    try:
+        return json.dumps(list_available_avds(), indent=2, ensure_ascii=False)
+    except Exception as e:
+        return f"Error: {e}"
+
+
+@mcp.tool()
+def start_emulator(
+    avd_name: str,
+    no_window: bool = False,
+    wipe_data: bool = False,
+) -> str:
+    """Start an Android emulator in the background.
+
+    Args:
+        avd_name: Name of the configured Android Virtual Device.
+        no_window: If True, starts the emulator without a visible window.
+        wipe_data: If True, starts the emulator with a wiped data partition.
+    """
+    try:
+        result = start_android_emulator(
+            avd_name,
+            no_window=no_window,
+            wipe_data=wipe_data,
+        )
+        return json.dumps(result, indent=2, ensure_ascii=False)
+    except Exception as e:
+        return f"Error: {e}"
+
+
+@mcp.tool()
+def device_info(device_id: str | None = None) -> str:
+    """Get detailed information about a connected device (model, screen size, Android version, etc.).
+
+    Args:
+        device_id: Optional device serial/device ID. Required when multiple devices are connected.
+    """
+    try:
+        d = _get_device(device_id)
         info = d.info
         device = d.device_info
         window = d.window_size()
         result = {
+            "device_id": device_manager.get_serial(device_id),
             "info": info,
             "device_info": device,
             "window_size": {"width": window[0], "height": window[1]},
@@ -209,15 +384,16 @@ def device_info() -> str:
 # ---------------------------------------------------------------------------
 
 @mcp.tool()
-def tap(x: int, y: int) -> str:
+def tap(x: int, y: int, device_id: str | None = None) -> str:
     """Tap at the given screen coordinates.
 
     Args:
         x: Horizontal coordinate (pixels from left).
         y: Vertical coordinate (pixels from top).
+        device_id: Optional device serial/device ID. Required when multiple devices are connected.
     """
     try:
-        d = device_manager.get_device()
+        d = _get_device(device_id)
         d.click(x, y)
         return f"Tapped at ({x}, {y})."
     except Exception as e:
@@ -264,6 +440,7 @@ def swipe(
     end_x: int,
     end_y: int,
     duration: float = 0.5,
+    device_id: str | None = None,
 ) -> str:
     """Swipe from one point to another.
 
@@ -273,9 +450,10 @@ def swipe(
         end_x: End horizontal coordinate.
         end_y: End vertical coordinate.
         duration: Swipe duration in seconds (default 0.5).
+        device_id: Optional device serial/device ID. Required when multiple devices are connected.
     """
     try:
-        d = device_manager.get_device()
+        d = _get_device(device_id)
         d.swipe(start_x, start_y, end_x, end_y, duration=duration)
         return f"Swiped from ({start_x}, {start_y}) to ({end_x}, {end_y})."
     except Exception as e:
@@ -323,17 +501,50 @@ def input_text(text: str) -> str:
 
 
 @mcp.tool()
-def press_key(key: str) -> str:
+def press_key(key: str, device_id: str | None = None) -> str:
     """Press a device key.
 
     Args:
         key: Key name — one of: home, back, enter, menu, recent,
              volume_up, volume_down, power, delete, tab, space.
+        device_id: Optional device serial/device ID. Required when multiple devices are connected.
     """
     try:
-        d = device_manager.get_device()
+        d = _get_device(device_id)
         d.press(key)
         return f"Pressed key: {key}"
+    except Exception as e:
+        return f"Error: {e}"
+
+
+@mcp.tool()
+def multi_tap(
+    x: int,
+    y: int,
+    count: int,
+    interval_ms: int = 120,
+    device_id: str | None = None,
+) -> str:
+    """Tap the same coordinates multiple times.
+
+    Args:
+        x: Horizontal coordinate.
+        y: Vertical coordinate.
+        count: Number of taps to perform. Must be at least 1.
+        interval_ms: Delay between taps in milliseconds (default 120).
+        device_id: Optional device serial/device ID. Required when multiple devices are connected.
+    """
+    try:
+        if count < 1:
+            return "Error: count must be at least 1."
+        if interval_ms < 0:
+            return "Error: interval_ms must be non-negative."
+        d = _get_device(device_id)
+        for index in range(count):
+            d.click(x, y)
+            if index < count - 1:
+                _sleep_seconds(interval_ms / 1000)
+        return f"Tapped ({x}, {y}) {count} times with {interval_ms}ms interval."
     except Exception as e:
         return f"Error: {e}"
 
@@ -363,19 +574,21 @@ def find_element(
     """
     try:
         d = device_manager.get_device()
-        if xpath:
-            elem = d.xpath(xpath)
-            if elem.exists:
-                info = elem.get()
-                return _format_element_info(info.info)
-            return f"Element not found with xpath: {xpath}"
-        selector = _build_selector(text, resource_id, class_name, description)
-        if not selector:
-            return "Error: provide at least one selector (text, resource_id, class_name, description, or xpath)."
-        elem = d(**selector)
-        if elem.exists:
-            return _format_element_info(elem.info)
-        return f"Element not found with selector: {selector}"
+        mode, query, elem = _locate_element(
+            d,
+            text=text,
+            resource_id=resource_id,
+            class_name=class_name,
+            description=description,
+            xpath=xpath,
+            error_message=(
+                "Error: provide at least one selector (text, resource_id, class_name, "
+                "description, or xpath)."
+            ),
+        )
+        if _element_exists(elem):
+            return _format_element_info(_element_info(elem, mode))
+        return f"Element not found with {_locator_label(mode, query)}"
     except Exception as e:
         return f"Error: {e}"
 
@@ -401,25 +614,18 @@ def tap_element(
     """
     try:
         d = device_manager.get_device()
-        if xpath:
-            elem = d.xpath(xpath)
-            if elem.exists:
-                node = elem.get()
-                if node is None or not hasattr(node, "info"):
-                    return "Error: Cannot resolve element bounds for tap"
-                x, y = _center_from_info(node.info, action="tap")
-                d.click(x, y)
-                return f"Tapped element (xpath: {xpath})."
-            return f"Element not found with xpath: {xpath}"
-        selector = _build_selector(text, resource_id, class_name, description)
-        if not selector:
-            return "Error: provide at least one selector."
-        elem = d(**selector)
-        if elem.exists:
-            x, y = _center_from_info(elem.info, action="tap")
-            d.click(x, y)
-            return f"Tapped element: {selector}"
-        return f"Element not found with selector: {selector}"
+        mode, query, elem = _locate_element(
+            d,
+            text=text,
+            resource_id=resource_id,
+            class_name=class_name,
+            description=description,
+            xpath=xpath,
+        )
+        if _element_exists(elem):
+            _tap_resolved_element(d, elem, mode)
+            return f"Tapped element ({_locator_label(mode, query)})."
+        return f"Element not found with {_locator_label(mode, query)}"
     except Exception as e:
         return f"Error: {e}"
 
@@ -438,25 +644,18 @@ def double_tap_element(
     """
     try:
         d = device_manager.get_device()
-        if xpath:
-            elem = d.xpath(xpath)
-            if elem.exists:
-                node = elem.get()
-                if node is None or not hasattr(node, "info"):
-                    return "Error: Cannot resolve element bounds for double tap"
-                x, y = _center_from_info(node.info, action="double tap")
-                d.double_click(x, y)
-                return f"Double-tapped element (xpath: {xpath})."
-            return f"Element not found with xpath: {xpath}"
-        selector = _build_selector(text, resource_id, class_name, description)
-        if not selector:
-            return "Error: provide at least one selector."
-        elem = d(**selector)
-        if elem.exists:
-            x, y = _center_from_info(elem.info, action="double tap")
-            d.double_click(x, y)
-            return f"Double-tapped element: {selector}"
-        return f"Element not found with selector: {selector}"
+        mode, query, elem = _locate_element(
+            d,
+            text=text,
+            resource_id=resource_id,
+            class_name=class_name,
+            description=description,
+            xpath=xpath,
+        )
+        if _element_exists(elem):
+            _tap_resolved_element(d, elem, mode, double=True)
+            return f"Double-tapped element ({_locator_label(mode, query)})."
+        return f"Element not found with {_locator_label(mode, query)}"
     except Exception as e:
         return f"Error: {e}"
 
@@ -572,14 +771,15 @@ def element_exists(
     """
     try:
         d = device_manager.get_device()
-        if xpath:
-            exists = d.xpath(xpath).exists
-            return json.dumps({"exists": exists, "xpath": xpath})
-        selector = _build_selector(text, resource_id, class_name, description)
-        if not selector:
-            return "Error: provide at least one selector."
-        exists = d(**selector).exists
-        return json.dumps({"exists": exists, "selector": selector})
+        mode, query, elem = _locate_element(
+            d,
+            text=text,
+            resource_id=resource_id,
+            class_name=class_name,
+            description=description,
+            xpath=xpath,
+        )
+        return json.dumps({"exists": _element_exists(elem), mode: query})
     except Exception as e:
         return f"Error: {e}"
 
@@ -605,18 +805,270 @@ def wait_element(
     """
     try:
         d = device_manager.get_device()
-        if xpath:
-            found = d.xpath(xpath).wait(timeout=timeout)
-            if found:
-                return f"Element appeared (xpath: {xpath})."
-            return f"Timeout ({timeout}s): element not found (xpath: {xpath})."
-        selector = _build_selector(text, resource_id, class_name, description)
-        if not selector:
-            return "Error: provide at least one selector."
-        found = d(**selector).wait(timeout=timeout)
+        mode, query, elem = _locate_element(
+            d,
+            text=text,
+            resource_id=resource_id,
+            class_name=class_name,
+            description=description,
+            xpath=xpath,
+        )
+        found = _wait_on_element(elem, mode, timeout=timeout)
         if found:
-            return f"Element appeared: {selector}"
-        return f"Timeout ({timeout}s): element not found: {selector}"
+            return f"Element appeared ({_locator_label(mode, query)})."
+        return f"Timeout ({timeout}s): element not found ({_locator_label(mode, query)})."
+    except Exception as e:
+        return f"Error: {e}"
+
+
+def _has_locator_fields(step: dict[str, Any]) -> bool:
+    """Return whether a step contains selector fields or XPath."""
+    return any(
+        step.get(key) is not None
+        for key in ("text", "resource_id", "class_name", "description", "xpath")
+    )
+
+
+def _validate_tap_sequence_steps(steps: list[dict[str, Any]]) -> None:
+    """Validate a tap sequence before execution starts."""
+    if not steps:
+        raise ValueError("steps must contain at least one action.")
+
+    allowed_actions = {"tap", "tap_element", "wait", "input_text", "press_key", "swipe"}
+    for index, step in enumerate(steps):
+        if not isinstance(step, dict):
+            raise ValueError(f"Step {index} must be an object.")
+        action = step.get("action")
+        if not isinstance(action, str) or action not in allowed_actions:
+            raise ValueError(
+                f"Step {index} has invalid action {action!r}. "
+                f"Allowed actions: {', '.join(sorted(allowed_actions))}"
+            )
+        if action == "tap":
+            if "x" not in step or "y" not in step:
+                raise ValueError(f"Step {index} (tap) requires x and y.")
+        elif action == "tap_element":
+            if not _has_locator_fields(step):
+                raise ValueError(f"Step {index} (tap_element) requires selector fields or xpath.")
+        elif action == "wait":
+            has_seconds = "seconds" in step
+            has_locator = _has_locator_fields(step)
+            if has_seconds == has_locator:
+                raise ValueError(
+                    f"Step {index} (wait) requires exactly one of seconds or locator fields."
+                )
+        elif action == "input_text":
+            if "text" not in step:
+                raise ValueError(f"Step {index} (input_text) requires text.")
+        elif action == "press_key":
+            if "key" not in step:
+                raise ValueError(f"Step {index} (press_key) requires key.")
+        elif action == "swipe":
+            required = {"start_x", "start_y", "end_x", "end_y"}
+            missing = sorted(required - step.keys())
+            if missing:
+                raise ValueError(
+                    f"Step {index} (swipe) is missing required fields: {', '.join(missing)}."
+                )
+
+
+def _execute_tap_sequence_step(d: Any, step: dict[str, Any]) -> str:
+    """Execute one validated tap-sequence step and return a short summary."""
+    action = step["action"]
+    if action == "tap":
+        d.click(step["x"], step["y"])
+        return f"tap({step['x']}, {step['y']})"
+    if action == "tap_element":
+        mode, query, elem = _locate_element(
+            d,
+            text=step.get("text"),
+            resource_id=step.get("resource_id"),
+            class_name=step.get("class_name"),
+            description=step.get("description"),
+            xpath=step.get("xpath"),
+        )
+        if not _element_exists(elem):
+            raise RuntimeError(f"Element not found with {_locator_label(mode, query)}")
+        _tap_resolved_element(d, elem, mode)
+        return f"tap_element({_locator_label(mode, query)})"
+    if action == "wait":
+        if "seconds" in step:
+            seconds = float(step["seconds"])
+            if seconds < 0:
+                raise RuntimeError("wait seconds must be non-negative")
+            _sleep_seconds(seconds)
+            return f"wait({seconds}s)"
+        mode, query, elem = _locate_element(
+            d,
+            text=step.get("text"),
+            resource_id=step.get("resource_id"),
+            class_name=step.get("class_name"),
+            description=step.get("description"),
+            xpath=step.get("xpath"),
+        )
+        timeout = float(step.get("timeout", 10.0))
+        gone = bool(step.get("gone", False))
+        matched = _wait_on_element(elem, mode, timeout=timeout, gone=gone)
+        if not matched:
+            verb = "disappear" if gone else "appear"
+            raise RuntimeError(
+                f"Timeout ({timeout}s): element did not {verb} ({_locator_label(mode, query)})"
+            )
+        return (
+            f"wait_gone({_locator_label(mode, query)})"
+            if gone
+            else f"wait_element({_locator_label(mode, query)})"
+        )
+    if action == "input_text":
+        d.send_keys(step["text"])
+        return f"input_text({step['text']!r})"
+    if action == "press_key":
+        d.press(step["key"])
+        return f"press_key({step['key']})"
+    if action == "swipe":
+        d.swipe(
+            step["start_x"],
+            step["start_y"],
+            step["end_x"],
+            step["end_y"],
+            duration=float(step.get("duration", 0.5)),
+        )
+        return (
+            "swipe("
+            f"{step['start_x']}, {step['start_y']} -> {step['end_x']}, {step['end_y']}"
+            ")"
+        )
+    raise RuntimeError(f"Unsupported action: {action}")
+
+
+@mcp.tool()
+def tap_and_wait(
+    text: str | None = None,
+    resource_id: str | None = None,
+    class_name: str | None = None,
+    description: str | None = None,
+    xpath: str | None = None,
+    wait_for_text: str | None = None,
+    wait_for_resource_id: str | None = None,
+    wait_for_class_name: str | None = None,
+    wait_for_description: str | None = None,
+    wait_for_xpath: str | None = None,
+    wait_until_gone: bool = False,
+    timeout: float = 10.0,
+    settle_time: float = 0.5,
+    compact: bool = True,
+    device_id: str | None = None,
+) -> str:
+    """Tap an element, wait for UI stabilization, and return a fresh hierarchy snapshot.
+
+    Wait strategy priority:
+    1. Wait for an expected next element to appear if any wait_for_* locator is provided.
+    2. Otherwise wait for the tapped element to disappear if wait_until_gone is True.
+    3. Otherwise sleep for settle_time seconds as a fallback.
+    """
+    try:
+        if wait_until_gone and any(
+            value is not None
+            for value in (
+                wait_for_text,
+                wait_for_resource_id,
+                wait_for_class_name,
+                wait_for_description,
+                wait_for_xpath,
+            )
+        ):
+            return "Error: use either wait_for_* selectors or wait_until_gone, not both."
+
+        d = _get_device(device_id)
+        tap_mode, tap_query, tap_elem = _locate_element(
+            d,
+            text=text,
+            resource_id=resource_id,
+            class_name=class_name,
+            description=description,
+            xpath=xpath,
+        )
+        if not _element_exists(tap_elem):
+            return f"Element not found with {_locator_label(tap_mode, tap_query)}"
+
+        _tap_resolved_element(d, tap_elem, tap_mode)
+        wait_reason = f"fallback settle_time={settle_time}s"
+
+        if any(
+            value is not None
+            for value in (
+                wait_for_text,
+                wait_for_resource_id,
+                wait_for_class_name,
+                wait_for_description,
+                wait_for_xpath,
+            )
+        ):
+            wait_mode, wait_query, wait_elem = _locate_element(
+                d,
+                text=wait_for_text,
+                resource_id=wait_for_resource_id,
+                class_name=wait_for_class_name,
+                description=wait_for_description,
+                xpath=wait_for_xpath,
+                error_message="Error: provide at least one wait_for selector.",
+            )
+            if not _wait_on_element(wait_elem, wait_mode, timeout=timeout):
+                return (
+                    f"Timeout ({timeout}s): expected next element not found "
+                    f"({_locator_label(wait_mode, wait_query)})."
+                )
+            wait_reason = f"waited for appearance of {_locator_label(wait_mode, wait_query)}"
+        elif wait_until_gone:
+            if not _wait_on_element(tap_elem, tap_mode, timeout=timeout, gone=True):
+                return (
+                    f"Timeout ({timeout}s): tapped element still present "
+                    f"({_locator_label(tap_mode, tap_query)})."
+                )
+            wait_reason = f"waited for disappearance of {_locator_label(tap_mode, tap_query)}"
+        else:
+            _sleep_seconds(settle_time)
+
+        snapshot = dump_hierarchy(compact=compact, device_id=device_id)
+        return (
+            f"Tapped {_locator_label(tap_mode, tap_query)} and {wait_reason}.\n\n"
+            f"UI snapshot:\n{snapshot}"
+        )
+    except Exception as e:
+        return f"Error: {e}"
+
+
+@mcp.tool()
+def tap_sequence(
+    steps: list[dict[str, Any]],
+    compact: bool = True,
+    device_id: str | None = None,
+) -> str:
+    """Execute a validated sequence of UI actions and return the final hierarchy snapshot.
+
+    Supported step actions:
+    - tap: {action: "tap", x: int, y: int}
+    - tap_element: {action: "tap_element", text/resource_id/class_name/description/xpath: ...}
+    - wait: {action: "wait", seconds: float} OR
+            {action: "wait", text/resource_id/class_name/description/xpath: ..., timeout?: float, gone?: bool}
+    - input_text: {action: "input_text", text: str}
+    - press_key: {action: "press_key", key: str}
+    - swipe: {action: "swipe", start_x: int, start_y: int, end_x: int, end_y: int, duration?: float}
+    """
+    try:
+        _validate_tap_sequence_steps(steps)
+        d = _get_device(device_id)
+        summaries: list[str] = []
+        for index, step in enumerate(steps):
+            try:
+                summaries.append(f"{index}: {_execute_tap_sequence_step(d, step)}")
+            except Exception as step_error:
+                return f"Error at step {index}: {step_error}"
+        snapshot = dump_hierarchy(compact=compact, device_id=device_id)
+        return (
+            f"Executed {len(steps)} steps successfully.\n"
+            f"Steps:\n- " + "\n- ".join(summaries) + f"\n\nUI snapshot:\n{snapshot}"
+        )
     except Exception as e:
         return f"Error: {e}"
 
@@ -906,7 +1358,10 @@ def watcher_remove(name: str | None = None) -> str:
 # ---------------------------------------------------------------------------
 
 @mcp.tool()
-def screenshot(save_path: str = "/tmp/screenshot.png") -> str:
+def screenshot(
+    save_path: str = "/tmp/screenshot.png",
+    device_id: str | None = None,
+) -> str:
     """Take a screenshot and save it to a file.
 
     Returns the file path. The agent can then open the file to view it.
@@ -915,9 +1370,10 @@ def screenshot(save_path: str = "/tmp/screenshot.png") -> str:
     Args:
         save_path: Path to save the screenshot (default "/tmp/screenshot.png").
                    Use .jpg extension for smaller file size.
+        device_id: Optional device serial/device ID. Required when multiple devices are connected.
     """
     try:
-        d = device_manager.get_device()
+        d = _get_device(device_id)
         img = d.screenshot()
         img.save(save_path)
         width, height = img.size
@@ -931,15 +1387,19 @@ def screenshot(save_path: str = "/tmp/screenshot.png") -> str:
 
 
 @mcp.tool()
-def dump_hierarchy(compact: bool = True) -> str:
+def dump_hierarchy(
+    compact: bool = True,
+    device_id: str | None = None,
+) -> str:
     """Dump the current UI hierarchy.
 
     Args:
         compact: If True (default), return a concise one-line-per-element format.
                  If False, return the full XML. Compact mode is 10-50x smaller.
+        device_id: Optional device serial/device ID. Required when multiple devices are connected.
     """
     try:
-        d = device_manager.get_device()
+        d = _get_device(device_id)
         xml_str = d.dump_hierarchy()
         if not compact:
             return xml_str
@@ -1002,15 +1462,20 @@ def _parse_hierarchy_compact(xml_str: str) -> str:
 # ---------------------------------------------------------------------------
 
 @mcp.tool()
-def app_start(package: str, activity: str | None = None) -> str:
+def app_start(
+    package: str,
+    activity: str | None = None,
+    device_id: str | None = None,
+) -> str:
     """Launch an application.
 
     Args:
         package: Package name (e.g. "com.android.settings").
         activity: Activity name (optional). If omitted, launches the default activity.
+        device_id: Optional device serial/device ID. Required when multiple devices are connected.
     """
     try:
-        d = device_manager.get_device()
+        d = _get_device(device_id)
         if activity:
             d.app_start(package, activity)
         else:
@@ -1107,10 +1572,14 @@ def app_list_running() -> str:
 
 
 @mcp.tool()
-def current_app() -> str:
-    """Get information about the currently focused application (package name and activity)."""
+def current_app(device_id: str | None = None) -> str:
+    """Get information about the currently focused application (package name and activity).
+
+    Args:
+        device_id: Optional device serial/device ID. Required when multiple devices are connected.
+    """
     try:
-        d = device_manager.get_device()
+        d = _get_device(device_id)
         info = d.app_current()
         return json.dumps(info, indent=2, ensure_ascii=False, default=str)
     except Exception as e:
@@ -1203,18 +1672,69 @@ def set_clipboard(text: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Diagnostics tools
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def clear_logs(device_id: str | None = None) -> str:
+    """Clear logcat buffers for the target device.
+
+    Args:
+        device_id: Optional ADB serial/device ID. If omitted, uses the currently connected device.
+    """
+    try:
+        serial = _resolve_adb_serial(device_id)
+        return clear_device_logs(serial)
+    except Exception as e:
+        return f"Error: {e}"
+
+
+@mcp.tool()
+def get_logs(
+    package: str | None = None,
+    level: str | None = None,
+    since: str | None = None,
+    lines: int = 200,
+    device_id: str | None = None,
+) -> str:
+    """Get filtered logcat output for the target device.
+
+    Args:
+        package: Optional Android package name to filter logs for.
+        level: Minimum log priority to include. Supports V/D/I/W/E/F/A and full names.
+        since: Optional timestamp filter. Supports ISO-8601, YYYY-MM-DD HH:MM:SS(.sss),
+               or MM-DD HH:MM:SS.sss.
+        lines: Maximum number of matching log lines to return (default 200).
+        device_id: Optional ADB serial/device ID. If omitted, uses the currently connected device.
+    """
+    try:
+        serial = _resolve_adb_serial(device_id)
+        query = LogQuery(
+            serial=serial,
+            package=package,
+            level=level,
+            since=since,
+            lines=lines,
+        )
+        return get_device_logs(query)
+    except Exception as e:
+        return f"Error: {e}"
+
+
+# ---------------------------------------------------------------------------
 # Shell & file tools
 # ---------------------------------------------------------------------------
 
 @mcp.tool()
-def shell(command: str) -> str:
+def shell(command: str, device_id: str | None = None) -> str:
     """Execute a shell command on the device and return the output.
 
     Args:
         command: Shell command to execute (e.g. "ls /sdcard").
+        device_id: Optional device serial/device ID. Required when multiple devices are connected.
     """
     try:
-        d = device_manager.get_device()
+        d = _get_device(device_id)
         result = d.shell(command)
         if isinstance(result, tuple):
             output, exit_code = result
@@ -1243,15 +1763,16 @@ def push_file(local: str, remote: str) -> str:
 
 
 @mcp.tool()
-def pull_file(remote: str, local: str) -> str:
+def pull_file(remote: str, local: str, device_id: str | None = None) -> str:
     """Pull a file from the device to local filesystem.
 
     Args:
         remote: File path on the device (e.g. "/sdcard/file.txt").
         local: Local destination path.
+        device_id: Optional device serial/device ID. Required when multiple devices are connected.
     """
     try:
-        d = device_manager.get_device()
+        d = _get_device(device_id)
         d.pull(remote, local)
         return f"Pulled {remote} -> {local}"
     except Exception as e:

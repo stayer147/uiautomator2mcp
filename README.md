@@ -70,25 +70,35 @@ pip install -e .
 uiautomator2-mcp
 ```
 
-## Available Tools (36)
+## Available Tools (44)
 
 ### Connection
 | Tool | Description |
 |------|-------------|
+| `list_devices` | List devices visible to ADB and whether they are connected in the MCP session |
+| `list_avds` | List configured Android Virtual Devices |
+| `start_emulator` | Start an Android emulator in the background |
 | `connect` | Connect to a device by serial/IP or auto-detect |
-| `disconnect` | Disconnect from the current device |
+| `disconnect` | Disconnect one connected device from the MCP session |
 | `device_info` | Get device model, screen size, Android version |
 
 ### UI Interaction
 | Tool | Description |
 |------|-------------|
 | `tap` | Tap at screen coordinates |
+| `multi_tap` | Tap the same coordinates multiple times |
 | `double_tap` | Double-tap at coordinates |
 | `long_tap` | Long-press at coordinates |
 | `swipe` | Swipe between two points |
 | `drag` | Drag between two points |
 | `input_text` | Type text into the focused field |
 | `press_key` | Press a device key (home, back, enter, etc.) |
+
+### Compound Actions
+| Tool | Description |
+|------|-------------|
+| `tap_and_wait` | Tap an element, wait for the next UI state, and return a fresh hierarchy snapshot |
+| `tap_sequence` | Execute a validated sequence of taps, waits, typing, key presses, and swipes |
 
 ### Element Operations
 | Tool | Description |
@@ -103,7 +113,7 @@ uiautomator2-mcp
 ### Screenshots & UI Hierarchy
 | Tool | Description |
 |------|-------------|
-| `screenshot` | Take a screenshot (base64 PNG) |
+| `screenshot` | Take a screenshot and save it to a file |
 | `dump_hierarchy` | Get XML UI hierarchy |
 
 ### App Management
@@ -129,6 +139,12 @@ uiautomator2-mcp
 | `get_clipboard` | Get clipboard content |
 | `set_clipboard` | Set clipboard content |
 
+### Diagnostics
+| Tool | Description |
+|------|-------------|
+| `clear_logs` | Clear logcat buffers on the device |
+| `get_logs` | Read filtered logcat output by package, level, timestamp, and line count |
+
 ### Shell & Files
 | Tool | Description |
 |------|-------------|
@@ -138,13 +154,41 @@ uiautomator2-mcp
 
 ## Example Workflow
 
-1. **Connect** to a device: `connect("emulator-5554")`
-2. **Take a screenshot** to see the current screen
-3. **Dump hierarchy** to understand the UI structure
-4. **Tap elements** by text or resource ID
-5. **Double-tap directly via XPath** when needed, e.g. `double_tap_element(xpath="//android.widget.TextView[@text='Gallery']")`
-6. **Type text** into input fields
-7. **Take another screenshot** to verify results
+When only one device is connected in the MCP session, tools can omit `device_id`. If you connect multiple devices, pass `device_id` explicitly to tools that support it such as `device_info`, `tap`, `swipe`, `press_key`, `screenshot`, `dump_hierarchy`, `app_start`, `current_app`, `shell`, `pull_file`, `clear_logs`, and `get_logs`.
+
+1. **List available devices**: `list_devices()`
+2. **Connect** to one device: `connect("emulator-5554")`
+3. **Optionally connect a second device**: `connect("emulator-5556")`
+4. **Inspect a specific device**: `device_info(device_id="emulator-5554")`
+5. **Take a screenshot** to see the current screen: `screenshot(device_id="emulator-5554")`
+6. **Dump hierarchy** to understand the UI structure: `dump_hierarchy(device_id="emulator-5554")`
+7. **Tap elements** by text or resource ID
+8. **Double-tap directly via XPath** when needed, e.g. `double_tap_element(xpath="//android.widget.TextView[@text='Gallery']")`
+9. **Type text** into input fields
+10. **Take another screenshot** to verify results
+
+## Example bug-report workflow
+
+1. **Clear old logs**: `clear_logs()`
+2. **Reproduce the bug** using the UI interaction tools
+3. **Capture error logs**: `get_logs(level="E", package="com.example.app")`
+4. **Take a screenshot** of the failing state
+5. **Dump hierarchy** if you need the exact UI structure
+
+## Example login in one tool call
+
+```python
+tap_sequence(
+  steps=[
+    {"action": "tap_element", "resource_id": "com.example:id/email"},
+    {"action": "input_text", "text": "user@example.com"},
+    {"action": "tap_element", "resource_id": "com.example:id/password"},
+    {"action": "input_text", "text": "correct horse battery staple"},
+    {"action": "tap_element", "resource_id": "com.example:id/sign_in"},
+    {"action": "wait", "resource_id": "com.example:id/home_feed", "timeout": 15}
+  ]
+)
+```
 
 ## Publishing to PyPI
 
