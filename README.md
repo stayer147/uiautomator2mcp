@@ -36,17 +36,20 @@ Add to `claude_desktop_config.json`:
 }
 ```
 
-### Before PyPI publish — install from git
+### Codex CLI
+
+Option 1 — add via CLI:
 
 ```bash
-# Claude Code
-claude mcp add uiautomator2 -- uvx --from "git+https://github.com/stayer147/uiautomator2mcp" uiautomator2-mcp
+codex mcp add uiautomator2 -- uvx uiautomator2-mcp
+```
 
-# Claude Desktop — use in config:
-{
-  "command": "uvx",
-  "args": ["--from", "git+https://github.com/stayer147/uiautomator2mcp", "uiautomator2-mcp"]
-}
+Option 2 — add to `~/.codex/config.toml` (or project `.codex/config.toml`):
+
+```toml
+[mcp_servers.uiautomator2]
+command = "uvx"
+args = ["uiautomator2-mcp"]
 ```
 
 ### Alternative methods
