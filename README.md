@@ -38,17 +38,18 @@ Add to `claude_desktop_config.json`:
 
 ### Codex CLI
 
-Add to Codex MCP config:
+Option 1 — add via CLI:
 
-```json
-{
-  "mcpServers": {
-    "uiautomator2": {
-      "command": "uvx",
-      "args": ["uiautomator2-mcp"]
-    }
-  }
-}
+```bash
+codex mcp add uiautomator2 -- uvx uiautomator2-mcp
+```
+
+Option 2 — add to `~/.codex/config.toml` (or project `.codex/config.toml`):
+
+```toml
+[mcp_servers.uiautomator2]
+command = "uvx"
+args = ["uiautomator2-mcp"]
 ```
 
 ### Alternative methods
