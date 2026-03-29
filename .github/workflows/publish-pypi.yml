@@ -1,0 +1,42 @@
+name: Publish to PyPI
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: '3.12'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Build package
+        run: uv build
+
+      - name: Publish package to PyPI (API token)
+        env:
+          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+        run: |
+          if [ -z "$UV_PUBLISH_TOKEN" ]; then
+            echo "PYPI_API_TOKEN is not set. Add it in GitHub: Settings -> Secrets and variables -> Actions." >&2
+            exit 1
+          fi
+          uv publish
