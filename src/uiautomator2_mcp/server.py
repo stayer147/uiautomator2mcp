@@ -1840,15 +1840,24 @@ def screen_off(device_id: str | None = None) -> str:
 
 @mcp.tool()
 def unlock(device_id: str | None = None) -> str:
-    """Unlock the device (turns screen on and swipes to unlock).
+    """Unlock the device and dismiss transient system overlays.
 
     Args:
         device_id: Optional device serial/device ID. Required when multiple devices are connected.
     """
     try:
         d = _get_device(device_id)
+        d.screen_on()
         d.unlock()
-        return "Device unlocked."
+        # Some OEMs can leave notification shade/keyguard overlays partially shown
+        # right after unlock. Back/back/home usually resets UI to a stable state.
+        time.sleep(0.2)
+        for key in ("back", "back", "home"):
+            try:
+                d.press(key)
+            except Exception:
+                continue
+        return "Device unlocked. Overlay dismissal attempted (back/back/home)."
     except Exception as e:
         return f"Error: {e}"
 
