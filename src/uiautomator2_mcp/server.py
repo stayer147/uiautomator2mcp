@@ -1855,40 +1855,23 @@ def screen_off(device_id: str | None = None) -> str:
 
 @mcp.tool()
 def unlock(device_id: str | None = None) -> str:
-    """Unlock the device and dismiss transient system overlays/keyguard remnants.
+    """Unlock the device using upstream uiautomator2 behavior and fallback gestures.
 
     Args:
         device_id: Optional device serial/device ID. Required when multiple devices are connected.
     """
     try:
         d = _get_device(device_id)
-        d.screen_on()
+        # Keep the call order compatible with openatx/uiautomator2: do not call
+        # screen_on() first, because Device.unlock() only swipes when screenOn=False.
         d.unlock()
-        # Some OEMs (notably MIUI/HyperOS) can keep keyguard UI overlays visible
-        # even after Android reports unlocked. If we still see lockscreen nodes,
-        # try a center swipe-up gesture and fallback key presses.
         time.sleep(0.2)
-        window_size = d.window_size()
-        width, height = int(window_size[0]), int(window_size[1])
-        swipe_start_x = width // 2
-        swipe_start_y = int(height * 0.82)
-        swipe_end_x = width // 2
-        swipe_end_y = int(height * 0.25)
 
-        for _ in range(2):
-            if not _has_keyguard_overlay(d):
-                break
-            try:
-                d.swipe(swipe_start_x, swipe_start_y, swipe_end_x, swipe_end_y, duration=0.15)
-            except Exception:
-                break
+        if _has_keyguard_overlay(d):
+            # Upstream unlock gesture (left-bottom -> right-top) as fallback for
+            # OEM lock screens that still show keyguard after d.unlock().
+            d.swipe(0.1, 0.9, 0.9, 0.1)
             time.sleep(0.2)
-
-        for key in ("back", "back", "home"):
-            try:
-                d.press(key)
-            except Exception:
-                continue
 
         if _has_keyguard_overlay(d):
             return (
