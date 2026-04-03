@@ -100,3 +100,30 @@ def test_scroll_routes_to_explicit_device() -> None:
     get_device.assert_called_once_with('serial-2')
     device.assert_called_once_with(scrollable=True)
     assert result == 'Scrolled forward. Reached end: False'
+
+
+def test_unlock_turns_screen_on_and_attempts_overlay_dismissal() -> None:
+    device = Mock()
+
+    with patch('uiautomator2_mcp.server._get_device', return_value=device) as get_device:
+        result = server.unlock(device_id='serial-2')
+
+    get_device.assert_called_once_with('serial-2')
+    device.screen_on.assert_called_once_with()
+    device.unlock.assert_called_once_with()
+    device.press.assert_any_call('back')
+    device.press.assert_any_call('home')
+    assert device.press.call_count == 3
+    assert result == 'Device unlocked. Overlay dismissal attempted (back/back/home).'
+
+
+def test_unlock_ignores_press_errors_after_successful_unlock() -> None:
+    device = Mock()
+    device.press.side_effect = RuntimeError('press failed')
+
+    with patch('uiautomator2_mcp.server._get_device', return_value=device):
+        result = server.unlock(device_id='serial-2')
+
+    device.screen_on.assert_called_once_with()
+    device.unlock.assert_called_once_with()
+    assert result == 'Device unlocked. Overlay dismissal attempted (back/back/home).'
