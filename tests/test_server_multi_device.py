@@ -104,6 +104,12 @@ def test_scroll_routes_to_explicit_device() -> None:
 
 def test_unlock_turns_screen_on_and_attempts_overlay_dismissal() -> None:
     device = Mock()
+    device.window_size.return_value = (1080, 2400)
+    device.dump_hierarchy.side_effect = [
+        "<node resource-id='keyguard_root_view'/>",
+        "<hierarchy/>",
+        "<hierarchy/>",
+    ]
 
     with patch('uiautomator2_mcp.server._get_device', return_value=device) as get_device:
         result = server.unlock(device_id='serial-2')
@@ -111,14 +117,17 @@ def test_unlock_turns_screen_on_and_attempts_overlay_dismissal() -> None:
     get_device.assert_called_once_with('serial-2')
     device.screen_on.assert_called_once_with()
     device.unlock.assert_called_once_with()
+    device.swipe.assert_called_once_with(540, 1967, 540, 600, duration=0.15)
     device.press.assert_any_call('back')
     device.press.assert_any_call('home')
     assert device.press.call_count == 3
-    assert result == 'Device unlocked. Overlay dismissal attempted (back/back/home).'
+    assert result == 'Device unlocked and keyguard overlay cleared.'
 
 
 def test_unlock_ignores_press_errors_after_successful_unlock() -> None:
     device = Mock()
+    device.window_size.return_value = (1080, 2400)
+    device.dump_hierarchy.return_value = "<hierarchy/>"
     device.press.side_effect = RuntimeError('press failed')
 
     with patch('uiautomator2_mcp.server._get_device', return_value=device):
@@ -126,4 +135,21 @@ def test_unlock_ignores_press_errors_after_successful_unlock() -> None:
 
     device.screen_on.assert_called_once_with()
     device.unlock.assert_called_once_with()
-    assert result == 'Device unlocked. Overlay dismissal attempted (back/back/home).'
+    device.swipe.assert_not_called()
+    assert result == 'Device unlocked and keyguard overlay cleared.'
+
+
+def test_unlock_reports_when_keyguard_overlay_persists() -> None:
+    device = Mock()
+    device.window_size.return_value = (1080, 2400)
+    device.dump_hierarchy.return_value = "<node resource-id='keyguard_panel_view'/>"
+
+    with patch('uiautomator2_mcp.server._get_device', return_value=device):
+        result = server.unlock(device_id='serial-2')
+
+    assert device.swipe.call_count == 2
+    assert (
+        result
+        == "Android lock-state is unlocked, but keyguard UI still appears on screen. "
+        "Additional authentication or OEM-specific gesture may be required."
+    )

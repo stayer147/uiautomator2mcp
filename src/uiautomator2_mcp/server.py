@@ -31,6 +31,12 @@ mcp = FastMCP(
     instructions="Android device automation via uiautomator2. Use list_devices() to choose a target, connect() one or more devices, then pass device_id when multiple devices are connected.",
 )
 
+_KEYGUARD_HINTS = (
+    "keyguard_root_view",
+    "keyguard_panel_view",
+    "com.android.systemui:id/keyguard",
+)
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -121,6 +127,15 @@ def _wait_on_element(element: Any, mode: str, *, timeout: float, gone: bool = Fa
     if mode == "xpath":
         return element.wait_gone(timeout=timeout) if gone else element.wait(timeout=timeout)
     return element.wait_gone(timeout=timeout) if gone else element.wait(timeout=timeout)
+
+
+def _has_keyguard_overlay(d: Any) -> bool:
+    """Best-effort check whether lockscreen/keyguard nodes still exist in hierarchy."""
+    try:
+        xml = d.dump_hierarchy()
+    except Exception:
+        return False
+    return any(marker in xml for marker in _KEYGUARD_HINTS)
 
 
 def _tap_resolved_element(d: Any, element: Any, mode: str, *, double: bool = False) -> None:
@@ -1840,7 +1855,7 @@ def screen_off(device_id: str | None = None) -> str:
 
 @mcp.tool()
 def unlock(device_id: str | None = None) -> str:
-    """Unlock the device and dismiss transient system overlays.
+    """Unlock the device and dismiss transient system overlays/keyguard remnants.
 
     Args:
         device_id: Optional device serial/device ID. Required when multiple devices are connected.
@@ -1849,15 +1864,38 @@ def unlock(device_id: str | None = None) -> str:
         d = _get_device(device_id)
         d.screen_on()
         d.unlock()
-        # Some OEMs can leave notification shade/keyguard overlays partially shown
-        # right after unlock. Back/back/home usually resets UI to a stable state.
+        # Some OEMs (notably MIUI/HyperOS) can keep keyguard UI overlays visible
+        # even after Android reports unlocked. If we still see lockscreen nodes,
+        # try a center swipe-up gesture and fallback key presses.
         time.sleep(0.2)
+        window_size = d.window_size()
+        width, height = int(window_size[0]), int(window_size[1])
+        swipe_start_x = width // 2
+        swipe_start_y = int(height * 0.82)
+        swipe_end_x = width // 2
+        swipe_end_y = int(height * 0.25)
+
+        for _ in range(2):
+            if not _has_keyguard_overlay(d):
+                break
+            try:
+                d.swipe(swipe_start_x, swipe_start_y, swipe_end_x, swipe_end_y, duration=0.15)
+            except Exception:
+                break
+            time.sleep(0.2)
+
         for key in ("back", "back", "home"):
             try:
                 d.press(key)
             except Exception:
                 continue
-        return "Device unlocked. Overlay dismissal attempted (back/back/home)."
+
+        if _has_keyguard_overlay(d):
+            return (
+                "Android lock-state is unlocked, but keyguard UI still appears on screen. "
+                "Additional authentication or OEM-specific gesture may be required."
+            )
+        return "Device unlocked and keyguard overlay cleared."
     except Exception as e:
         return f"Error: {e}"
 
